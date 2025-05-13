@@ -1,0 +1,31 @@
+{
+  "id": "get_user",
+  "description": "Get a user by ID",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "userId": { "type": "number" }
+    },
+    "required": ["userId"]
+  },
+  "entry": "getUser",
+  "result": "createUser",
+  "outputSchema": {
+    "type": "number"
+  },
+  "steps": [
+    {
+      "id": "getUser",
+
+      "type": "query",
+      "depends_on": ["input"],
+      "params": {
+        "table": "users",
+        "select": ["id", "email"],
+        "where": {
+          "id": "$input.userId"
+        }
+      }
+    }
+  ]
+}
