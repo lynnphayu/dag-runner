@@ -142,3 +142,29 @@ func (r *Postgres) Delete(table string, where map[string]interface{}) (interface
 	query, args := BuildDeleteQuery(table, where)
 	return r.mutate(query, args...)
 }
+
+func (r *Postgres) GetTableNames() ([]string, error) {
+	rows, err := r.Retrieve("information_schema.tables", []string{"table_name"}, map[string]interface{}{"table_schema": "public"})
+	if err != nil {
+		return nil, err
+	}
+	var tableNames []string
+	for _, row := range rows {
+		tableNames = append(tableNames, row.(map[string]interface{})["table_name"].(string))
+	}
+	return tableNames, nil
+}
+
+func (r *Postgres) GetColumns(tableName string) (map[string]string, error) {
+	rows, err := r.Retrieve("information_schema.columns", []string{"column_name", "udt_name"}, map[string]interface{}{"table_name": tableName, "table_schema": "public"})
+	if err != nil {
+		return nil, err
+	}
+	schema := make(map[string]string)
+	for _, row := range rows {
+		columnName := row.(map[string]interface{})["column_name"].(string)
+		dataType := row.(map[string]interface{})["udt_name"].(string)
+		schema[columnName] = dataType
+	}
+	return schema, nil
+}

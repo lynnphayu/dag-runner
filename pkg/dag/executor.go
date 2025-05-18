@@ -14,6 +14,9 @@ type Persist interface {
 	Retrieve(table string, select_ []string, where map[string]interface{}) ([]interface{}, error)
 	Update(table string, data map[string]interface{}, where map[string]interface{}) (interface{}, error)
 	Delete(table string, where map[string]interface{}) (interface{}, error)
+
+	GetTableNames() ([]string, error)
+	GetColumns(table string) (map[string]string, error)
 }
 
 type ParsedResponse struct {
