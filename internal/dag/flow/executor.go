@@ -6,211 +6,332 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/lynnphayu/swift/dagflow/internal/dag/db"
 	"github.com/lynnphayu/swift/dagflow/internal/dag/domain"
+	http "github.com/lynnphayu/swift/dagflow/internal/dag/repositories/http"
+	postgres "github.com/lynnphayu/swift/dagflow/internal/dag/repositories/postgres"
 	"github.com/xeipuuv/gojsonschema"
 )
 
 // Executor handles the execution of a DAG with parallel processing capabilities
 type Executor struct {
-	repo *db.Repository
-	// Track step results - no lock needed as step IDs are unique
-	results map[string]interface{}
-	context *domain.Context
-	// Error channel for collecting errors from goroutines
-	errChan        chan error
-	completionChan chan string
+	db         *postgres.Postgres
+	httpClient *http.Http
+}
+
+type Execution struct {
+	dag      *domain.DAG
+	stepsMap map[string]*domain.Step
+	context  *domain.Context
+	output   interface{}
+
+	executor     *Executor
+	wg           *sync.WaitGroup
+	errorChannel chan error
 }
 
 // NewExecutor creates a new DAG executor
 func NewExecutor(connStr string) (*Executor, error) {
-	repo, err := db.NewRepository(connStr)
+	db, err := postgres.NewPostgres(connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create repository: %w", err)
 	}
+	httpClient, err := http.NewHttp(connStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create http client: %w", err)
+	}
 	return &Executor{
-		repo:           repo,
-		results:        make(map[string]interface{}),
-		completionChan: make(chan string, 1),
-		errChan:        make(chan error, 100),
+		db:         db,
+		httpClient: httpClient,
 	}, nil
 }
 
 // Execute runs the DAG with parallel execution of steps
 func (e *Executor) Execute(dag *domain.DAG, input map[string]interface{}) (interface{}, error) {
-	// Validate input against schema
-	fmt.Println("Validating input...")
-	fmt.Println("DAG:", dag)
 	if err := validateSchema(dag.InputSchema, input); err != nil {
 		return nil, fmt.Errorf("input validation failed: %w", err)
 	}
 
+	stepsMap, err := e.mapSteps(dag)
+	if err != nil {
+		return nil, err
+	}
+
+	execution := &Execution{
+		dag:      dag,
+		stepsMap: stepsMap,
+		context: &domain.Context{
+			Results: &map[string]interface{}{},
+			Input:   &input,
+		},
+		executor:     e,
+		wg:           &sync.WaitGroup{},
+		errorChannel: make(chan error, 1),
+	}
+
 	// Create wait group for tracking goroutines
-	var wg sync.WaitGroup
 
 	// Start execution from the entry step
-	var Entry domain.Step
-	for _, step := range dag.Steps {
-		if step.ID == dag.Entry {
-			Entry = step
-			break
-		}
-	}
-	if Entry.ID == "" {
-		return nil, fmt.Errorf("entry step '%s' not found", dag.Entry)
+	independentSteps := e.independentSteps(dag)
+	for _, step := range independentSteps {
+		execution.wg.Add(1)
+		go execution.executeStepAsync(execution.stepsMap[step])
 	}
 
-	// Execute entry step and start recursive execution
-	e.results["input"] = input
-	e.context = &domain.Context{
-		Results: &e.results,
-		Input:   &input,
-	}
-	for _, dep := range dag.Steps {
-		wg.Add(1)
-		go e.executeStepAsync(&dep, &wg, dag)
-	}
-
-	// Wait for all steps to complete
-	wg.Wait()
-	// close(e.completionChan)
-	fmt.Println("All steps completed")
+	execution.wg.Wait()
 
 	// Check for any errors
 	select {
-	case err := <-e.errChan:
+	case err := <-execution.errorChannel:
 		return nil, err
 	default:
 		// No errors occurred
 	}
 
 	// Get the final step result
-	result, ok := e.results[dag.Result]
-	if !ok {
-		return nil, fmt.Errorf("final step result not found")
-	}
+	// result, ok := (*execution.context.Results)[dag.Result]
+	// if !ok {
+	// 	return nil, fmt.Errorf("final step result not found")
+	// }
 
-	fmt.Println("Before validation :", result)
+	// result := resolveString[interface{}](dag.Result, execution.context)
+
 	// Validate output against schema
-	if err := validateSchema(dag.OutputSchema, result); err != nil {
-
+	if err := validateSchema(dag.OutputSchema, execution.output); err != nil {
 		return nil, fmt.Errorf("output validation failed: %w", err)
 	}
-	fmt.Println("Validation passed :", result)
 
-	return result.(interface{}), nil
+	return execution.output.(interface{}), nil
+}
+
+func (e *Executor) mapSteps(dag *domain.DAG) (map[string]*domain.Step, error) {
+	steps := make(map[string]*domain.Step)
+	for _, step := range dag.Steps {
+		if _, ok := steps[step.ID]; ok {
+			return nil, fmt.Errorf("Duplicate step ID: %s", step.ID)
+		}
+		steps[step.ID] = &step
+	}
+	return steps, nil
+}
+
+func (e *Executor) independentSteps(dag *domain.DAG) []string {
+	dependentSteps := make(map[string]bool)
+	independentSteps := make([]string, 0)
+	for _, step := range dag.Steps {
+		for _, dep := range step.Then {
+			dependentSteps[dep] = true
+		}
+		// only for Condition type
+		for _, dep := range step.Else {
+			dependentSteps[dep] = true
+		}
+	}
+	for _, step := range dag.Steps {
+		if !dependentSteps[step.ID] {
+			independentSteps = append(independentSteps, step.ID)
+		}
+	}
+	return independentSteps
 }
 
 // executeStepAsync executes a single step asynchronously and triggers dependent steps
-func (e *Executor) executeStepAsync(step *domain.Step, wg *sync.WaitGroup, dag *domain.DAG) {
-	defer wg.Done()
+func (e *Execution) executeStepAsync(step *domain.Step) {
+	defer e.wg.Done()
 
 	fmt.Println("Executing step:", step.ID)
-	// Check if all dependencies are completed
-	if len(step.DependsOn) > 0 {
-		for _, depID := range step.DependsOn {
-			if depID == "input" {
-				continue
-			}
-			if _, completed := e.results[depID]; !completed {
-				// Wait for dependency to complete
-				for completedStep := range e.completionChan {
-					if completedStep == depID {
-						break
-					}
-				}
-			}
-		}
-	}
 
 	// Execute the step
 	result, err := e.executeStep(step)
 	fmt.Println("Step result:", step.ID, result)
 	if err != nil {
-		e.errChan <- fmt.Errorf("failed to execute step %s: %w", step.ID, err)
+		e.errorChannel <- fmt.Errorf("failed to execute step %s: %w", step.ID, err)
 		return
 	}
 
 	// Store the result
-	e.results[step.ID] = result
-	for _, dep := range dag.Steps {
-		if contains(dep.DependsOn, step.ID) {
-			e.completionChan <- step.ID
-			break
-		}
+	(*e.context.Results)[step.ID] = result
+	if step.Output != "" {
+		e.output = resolveString[interface{}](step.Output, e.context)
+	}
+
+	for _, dep := range step.Then {
+		e.wg.Add(1)
+
+		go e.executeStepAsync(e.stepsMap[dep])
 	}
 }
 
 // executeStep executes a single step
-func (e *Executor) executeStep(step *domain.Step) (interface{}, error) {
+func (e *Execution) executeStep(step *domain.Step) (interface{}, error) {
 	// Handle different step types
 	switch step.Type {
 	case "query":
 		return e.executeQuery(step)
-	case "join":
-		return e.executeJoin(step)
+	case "insert":
+		return e.executeInsert(step)
+	// case "join":
+	// 	return e.executeJoin(step)
+	case "http":
+		return e.executeHTTP(step)
+	case "condition":
+		return e.executeCondition(step)
 	default:
 		return nil, fmt.Errorf("unsupported step type: %s", step.Type)
 	}
 }
 
-func (e *Executor) executeQuery(step *domain.Step) (interface{}, error) {
-	// Build query
+func eveluateCondition(left interface{}, right interface{}, operator domain.Operator, ctx *domain.Context) bool {
+	if v, ok := left.(string); ok {
+		resolvedLeft := resolveString[interface{}](v, ctx)
+		left = resolvedLeft
+	} else if v, ok := left.(domain.Condition); ok {
+		left = eveluateCondition(v.Left, v.Right, v.Operator, ctx)
+	}
+
+	if v, ok := right.(string); ok {
+		resolvedRight := resolveString[interface{}](v, ctx)
+		right = resolvedRight
+	} else if v, ok := right.(domain.Condition); ok {
+		right = eveluateCondition(v.Left, v.Right, v.Operator, ctx)
+	}
+	// Convert left and right to the same type for comparison
+	switch {
+	case isNumeric(left) || isNumeric(right):
+		// Convert both to float64 for numeric comparisons
+		leftNum := toFloat64(left)
+		rightNum := toFloat64(right)
+		left = leftNum
+		right = rightNum
+	case isString(left) || isString(right):
+		// Convert both to strings for string comparisons
+		left = fmt.Sprintf("%v", left)
+		right = fmt.Sprintf("%v", right)
+	case isBool(left) || isBool(right):
+		// Convert both to bools for boolean comparisons
+		leftBool, leftOk := left.(bool)
+		rightBool, rightOk := right.(bool)
+		if !leftOk || !rightOk {
+			return false
+		}
+		left = leftBool
+		right = rightBool
+	}
+	switch operator {
+	case domain.EQ:
+		return left == right
+	case domain.NE:
+		return left != right
+	case domain.GT:
+		return left.(float64) > right.(float64)
+	case domain.GTE:
+		return left.(float64) >= right.(float64)
+	case domain.LT:
+		return left.(float64) < right.(float64)
+	case domain.LTE:
+		return left.(float64) <= right.(float64)
+	case domain.IN:
+		return contains(right.([]string), left.(string))
+	case domain.NOTIN:
+		return !contains(right.([]string), left.(string))
+	case domain.AND:
+		return left.(bool) && right.(bool)
+	case domain.OR:
+		return left.(bool) || right.(bool)
+	default:
+		return false
+	}
+
+}
+
+func (e *Execution) executeCondition(step *domain.Step) (interface{}, error) {
+	left := step.If.Left
+	right := step.If.Right
+	operator := step.Params.If.Operator
+
+	result := eveluateCondition(left, right, operator, e.context)
+	elseStep := step.Else
+	if !result {
+		for _, dep := range elseStep {
+			e.wg.Add(1)
+			go e.executeStepAsync(e.stepsMap[dep])
+		}
+	}
+	return nil, nil
+}
+
+func (e *Execution) executeInsert(step *domain.Step) (interface{}, error) {
+	query, args, err := postgres.BuildInsertQuery(step.Params.Table, step.Params.Map, e.context)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build insert query: %w", err)
+	}
+	return e.executor.db.Insert(query, args...)
+}
+
+func (e *Execution) executeQuery(step *domain.Step) (interface{}, error) {
 	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(step.Params.Select, ", "), step.Params.Table)
 	if len(step.Params.Where) > 0 {
-		whereClause, args := db.BuildWhereClause(step.Params.Where, e.context)
+		resolvedQuery := resolveValues[map[string]interface{}, map[string]interface{}](step.Params.Where, e.context)
+		whereClause, args := postgres.BuildWhereClause(resolvedQuery)
 		query += " WHERE " + whereClause
-
-		fmt.Println("Query:", query)
-		fmt.Println("Args:", args)
-		// Execute query using repository
-		return e.repo.ExecuteQuery(query, args...)
+		return e.executor.db.Query(query, args...)
 	}
-
-	// Execute query without where clause
-	return e.repo.ExecuteQuery(query)
+	return e.executor.db.Query(query)
 }
 
-func (e *Executor) executeJoin(step *domain.Step) (interface{}, error) {
-	// Get input data
-	var datasets [][]map[string]interface{}
-	if len(step.DependsOn) != 2 {
-		return nil, fmt.Errorf("join step requires exactly two dependent steps")
+func (e *Execution) executeHTTP(step *domain.Step) (interface{}, error) {
+	result, err := e.executor.httpClient.Execute(
+		step.Params.Method,
+		step.Params.URL,
+		resolveValues[map[string]interface{}, map[string]interface{}](step.Params.Query, e.context),
+		resolveValues[map[string]interface{}, map[string]interface{}](step.Params.Body, e.context),
+		resolveValues[map[string]string, map[string]string](step.Params.Headers, e.context),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute HTTP request: %w", err)
 	}
-	if step.Params.Left == "" {
-		return nil, fmt.Errorf("join step requires left parameter")
-	}
-	if step.Params.Right == "" {
-		return nil, fmt.Errorf("join step requires right parameter")
-	}
-	if !contains(strings.Split(step.DependsOn[0], "."), step.Params.Left) && !contains(strings.Split(step.DependsOn[0], "."), step.Params.Left) {
-		return nil, fmt.Errorf("join step left parameter must be one of the dependent steps")
-	}
-	if !contains(strings.Split(step.DependsOn[0], "."), step.Params.Right) && !contains(strings.Split(step.DependsOn[0], "."), step.Params.Right) {
-		return nil, fmt.Errorf("join step right parameter must be one of the dependent steps")
-	}
-	if step.Params.Left == step.Params.Right {
-		return nil, fmt.Errorf("join step left and right parameters cannot be the same")
-	}
-	if (*e.context.Results)[step.DependsOn[0]] == nil {
-		return nil, fmt.Errorf("join step left dependent step %s not found", step.DependsOn[0])
-	}
-	if (*e.context.Results)[step.DependsOn[1]] == nil {
-		return nil, fmt.Errorf("join step right dependent step %s not found", step.DependsOn[1])
-	}
-	if v, ok := (*e.context.Results)[step.DependsOn[0]].([]map[string]interface{}); ok {
-		datasets = append(datasets, v)
-	} else {
-		return nil, fmt.Errorf("join step left dependent step %s is not a slice", step.DependsOn[0])
-	}
-	if v, ok := (*e.context.Results)[step.DependsOn[1]].([]map[string]interface{}); ok {
-		datasets = append(datasets, v)
-	} else {
-		return nil, fmt.Errorf("join step right dependent step %s is not a slice", step.DependsOn[1])
-	}
-
-	return performJoin(datasets, step.Params.On, step.Params.Type)
+	return result, nil
 }
+
+// func (e *Execution) executeJoin(step *domain.Step) (interface{}, error) {
+// 	// Get input data
+// 	var datasets [][]map[string]interface{}
+// 	if len(step.DependsOn) != 2 {
+// 		return nil, fmt.Errorf("join step requires exactly two dependent steps")
+// 	}
+// 	if step.Params.Left == "" {
+// 		return nil, fmt.Errorf("join step requires left parameter")
+// 	}
+// 	if step.Params.Right == "" {
+// 		return nil, fmt.Errorf("join step requires right parameter")
+// 	}
+// 	if !contains(strings.Split(step.DependsOn[0], "."), step.Params.Left) && !contains(strings.Split(step.DependsOn[0], "."), step.Params.Left) {
+// 		return nil, fmt.Errorf("join step left parameter must be one of the dependent steps")
+// 	}
+// 	if !contains(strings.Split(step.DependsOn[0], "."), step.Params.Right) && !contains(strings.Split(step.DependsOn[0], "."), step.Params.Right) {
+// 		return nil, fmt.Errorf("join step right parameter must be one of the dependent steps")
+// 	}
+// 	if step.Params.Left == step.Params.Right {
+// 		return nil, fmt.Errorf("join step left and right parameters cannot be the same")
+// 	}
+// 	if (*e.context.Results)[step.DependsOn[0]] == nil {
+// 		return nil, fmt.Errorf("join step left dependent step %s not found", step.DependsOn[0])
+// 	}
+// 	if (*e.context.Results)[step.DependsOn[1]] == nil {
+// 		return nil, fmt.Errorf("join step right dependent step %s not found", step.DependsOn[1])
+// 	}
+// 	if v, ok := (*e.context.Results)[step.DependsOn[0]].([]map[string]interface{}); ok {
+// 		datasets = append(datasets, v)
+// 	} else {
+// 		return nil, fmt.Errorf("join step left dependent step %s is not a slice", step.DependsOn[0])
+// 	}
+// 	if v, ok := (*e.context.Results)[step.DependsOn[1]].([]map[string]interface{}); ok {
+// 		datasets = append(datasets, v)
+// 	} else {
+// 		return nil, fmt.Errorf("join step right dependent step %s is not a slice", step.DependsOn[1])
+// 	}
+
+// 	return performJoin(datasets, step.Params.On, step.Params.Type)
+// }
 
 func contains(slice []string, str string) bool {
 	for _, s := range slice {
@@ -231,12 +352,9 @@ func ParseDAG(dagString []byte) (domain.DAG, error) {
 }
 
 func validateSchema(schema domain.Schema, data interface{}) error {
-	fmt.Println("Validating schema...", schema, data)
-
 	schemaLoader := gojsonschema.NewGoLoader(schema)
 	dataLoader := gojsonschema.NewGoLoader(data)
 
-	fmt.Println("loaded:", schemaLoader, dataLoader)
 	result, err := gojsonschema.Validate(schemaLoader, dataLoader)
 	if err != nil {
 		return err

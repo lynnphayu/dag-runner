@@ -4,9 +4,11 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/expr-lang/expr"
+	"github.com/lynnphayu/swift/dagflow/internal/dag/domain"
 )
 
 // scanRows scans SQL rows into a slice of maps
@@ -163,31 +165,6 @@ func compareValues(a, b interface{}) int {
 	}
 }
 
-// applyMapping applies a mapping function to data
-func applyMapping(data interface{}, function string) (interface{}, error) {
-	// Convert function name to actual mapping logic
-	mapper, err := getMappingFunction(function)
-	if err != nil {
-		return nil, err
-	}
-
-	return mapper(data)
-}
-
-// getMappingFunction returns a mapping function by name
-func getMappingFunction(name string) (func(interface{}) (interface{}, error), error) {
-	// Add your mapping functions here
-	mappings := map[string]func(interface{}) (interface{}, error){
-		"createOrderSummary":   createOrderSummary,
-		"combineUserAndOrders": combineUserAndOrders,
-	}
-
-	if fn, ok := mappings[name]; ok {
-		return fn, nil
-	}
-	return nil, fmt.Errorf("mapping function %s not found", name)
-}
-
 // executeInsert executes an insert operation
 func executeInsert(db *sql.DB, table string, mapping map[string]string, data interface{}) (interface{}, error) {
 	// Build insert query
@@ -242,74 +219,175 @@ func executeInsert(db *sql.DB, table string, mapping map[string]string, data int
 	return id, nil
 }
 
-// evaluateCondition evaluates a condition expression
-func evaluateCondition(condition string, data interface{}) (bool, error) {
+func resolveValues[T []map[string]T | map[string]T | string | bool | int | interface{}, R any](input T, context *domain.Context) R {
+	// Handle different types of inputs
+
+	switch v := any(input).(type) {
+	case map[string]interface{}:
+		resolvedMap := make(map[string]interface{})
+		for key, value := range v {
+			if str, ok := value.(string); ok {
+				resolvedMap[key] = resolveString[interface{}](str, context)
+			} else if integer, ok := value.(int); ok {
+				resolvedMap[key] = integer
+			} else if boolean, ok := value.(bool); ok {
+				resolvedMap[key] = boolean
+			} else if obj, ok := value.(map[string]interface{}); ok {
+				resolvedMap[key] = resolveValues[map[string]interface{}, map[string]interface{}](obj, context)
+			} else if slice, ok := value.([]map[string]interface{}); ok {
+				resolvedMap[key] = resolveValues[[]map[string]interface{}, []map[string]interface{}](slice, context)
+			}
+		}
+		if _, ok := any(map[string]interface{}{}).(R); ok {
+			return any(resolvedMap).(R)
+		}
+	case []map[string]any:
+		resolvedSlice := make([]map[string]interface{}, len(v))
+		for i, item := range v {
+			resolvedItem := resolveValues[map[string]interface{}, map[string]interface{}](item, context)
+			resolvedSlice[i] = resolvedItem
+		}
+		if _, ok := any(map[string]interface{}{}).(R); ok {
+			return any(resolvedSlice).(R)
+		}
+	case string:
+		resolvedValue := resolveString[string](v, context)
+		if _, ok := any(resolvedValue).(string); ok {
+			return any(v).(R)
+		}
+		if _, ok := any(resolvedValue).(bool); ok {
+			b, _ := strconv.ParseBool(v)
+			return any(b).(R)
+		}
+		if _, ok := any(resolvedValue).(int); ok {
+			i, _ := strconv.Atoi(v)
+			return any(i).(R)
+		}
+	case bool:
+		if _, ok := any(v).(bool); ok {
+			return any(v).(R)
+		}
+	case int:
+		if _, ok := any(v).(int); ok {
+			return any(v).(R)
+		}
+	default:
+		return any(v).(R)
+	}
+	var zeroValue R
+	return zeroValue
+}
+
+func resolveString[T []map[string]T | map[string]T | string | bool | int | interface{}](str string, context *domain.Context) T {
+	// Handle string interpolation for ${var} syntax
 	env := map[string]interface{}{
-		"input": data,
+		"input":   context.Input,
+		"results": context.Results,
 	}
 
-	result, err := expr.Eval(condition, env)
-	if err != nil {
-		return false, err
+	// Handle string interpolation with ${var} syntax
+	if strings.Contains(str, "${") {
+		result := str
+		for {
+			start := strings.Index(result, "${")
+			if start == -1 {
+				break
+			}
+			end := strings.Index(result[start:], "}") + start
+			if end == -1 {
+				break
+			}
+
+			template := result[start+2 : end]
+			evaluated, err := expr.Eval(template, env)
+			if err == nil {
+				result = result[:start] + fmt.Sprint(evaluated) + result[end+1:]
+			}
+		}
+		return any(result).(T)
 	}
 
-	bool, ok := result.(bool)
-	if !ok {
-		return false, fmt.Errorf("condition did not evaluate to boolean")
-	}
-
-	return bool, nil
-}
-
-// Example mapping functions
-func createOrderSummary(data interface{}) (interface{}, error) {
-	orders, ok := data.([]map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid input format for createOrderSummary")
-	}
-
-	var total float64
-	for _, order := range orders {
-		if t, ok := order["total"].(float64); ok {
-			total += t
+	// Handle direct expression evaluation with $ prefix
+	if strings.HasPrefix(str, "$") {
+		result, err := expr.Eval(str[1:], env)
+		if err == nil {
+			// Try direct type assertion
+			if converted, ok := result.(T); ok {
+				return converted
+			}
+			// Try string conversion for bool/int types
+			return any(result).(T)
+		} else {
+			return any(str).(T)
 		}
 	}
 
-	return map[string]interface{}{
-		"orders":     orders,
-		"totalSpent": total,
-	}, nil
+	return any(str).(T)
 }
 
-func combineUserAndOrders(data interface{}) (interface{}, error) {
-	inputs, ok := data.([]interface{})
-	if !ok || len(inputs) != 2 {
-		return nil, fmt.Errorf("invalid input format for combineUserAndOrders")
+func isNumeric(value interface{}) bool {
+	switch value.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return true
+	default:
+		return false
 	}
+}
 
-	user, ok := inputs[0].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid user data format")
+func isString(value interface{}) bool {
+	_, ok := value.(string)
+	return ok
+}
+
+func isBool(value interface{}) bool {
+	_, ok := value.(bool)
+	return ok
+}
+
+func toFloat64(value interface{}) float64 {
+	switch v := value.(type) {
+	case int:
+	case int8:
+	case int16:
+	case int32:
+	case int64:
+	case uint:
+	case uint8:
+	case uint16:
+	case uint32:
+	case uint64:
+	case float32:
+	case float64:
+		return float64(v)
+	default:
+		return 0
 	}
-
-	orders, ok := inputs[1].([]map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid orders data format")
+	switch v := value.(type) {
+	case int:
+		return float64(v)
+	case int8:
+		return float64(v)
+	case int16:
+		return float64(v)
+	case int32:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case uint:
+		return float64(v)
+	case uint8:
+		return float64(v)
+	case uint16:
+		return float64(v)
+	case uint32:
+		return float64(v)
+	case uint64:
+		return float64(v)
+	case float32:
+		return float64(v)
+	case float64:
+		return v
+	default:
+		return 0
 	}
-
-	var total float64
-	for _, order := range orders {
-		if t, ok := order["total"].(float64); ok {
-			total += t
-		}
-	}
-
-	return map[string]interface{}{
-		"user": map[string]interface{}{
-			"id":   user["id"],
-			"name": user["name"],
-		},
-		"orders":     orders,
-		"totalSpent": total,
-	}, nil
 }

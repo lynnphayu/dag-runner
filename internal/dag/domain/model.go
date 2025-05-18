@@ -24,20 +24,66 @@ type Schema struct {
 	Required   []string          `json:"required,omitempty"`
 }
 
-// // Property represents a JSON schema property
-// type Property struct {
-// 	Type    string      `json:"type"`
-// 	Items   *Schema     `json:"items,omitempty"`
-// 	Default interface{} `json:"default,omitempty"`
-// }
-
 // Step represents a single step in the DAG
 type Step struct {
 	ID   string `json:"id"`
 	Type string `json:"type"`
 	// Input     interface{} `json:"input,omitempty"` // Can be string or []string
-	Params    StepParams `json:"params"`
-	DependsOn []string   `json:"depends_on,omitempty"`
+	Params
+	// Next   []string `json:"next,omitempty"`
+	Then   []string `json:"then,omitempty"`
+	Output string   `json:"output,omitempty"`
+}
+
+type Params struct {
+	DbOperationParams
+	JoinParams
+	FilterParams
+	MapParams
+	ConditionParams
+	HTTPParams
+}
+
+type DbOperationParams struct {
+	Table string `json:"table"`
+	QueryParams
+	InsertParams
+}
+
+type QueryParams struct {
+	Select []string               `json:"select"`
+	Where  map[string]interface{} `json:"where"`
+}
+type InsertParams struct {
+	Map map[string]string `json:"map"`
+}
+
+type JoinParams struct {
+	On    map[string]string `json:"on"`
+	Type  string            `json:"type"`
+	Left  string            `json:"left"`
+	Right string            `json:"right"`
+}
+
+type FilterParams struct {
+	Filter map[string]interface{} `json:"filter"`
+}
+
+type MapParams struct {
+	Function string `json:"function"`
+}
+
+type ConditionParams struct {
+	If   Condition `json:"if"`
+	Else []string  `json:"else"`
+}
+
+type HTTPParams struct {
+	Method  string                 `json:"method"`
+	URL     string                 `json:"url"`
+	Headers map[string]string      `json:"headers,omitempty"`
+	Body    map[string]interface{} `json:"body,omitempty"`
+	Query   map[string]interface{} `json:"query,omitempty"`
 }
 
 // StepParams represents the parameters for different step types
@@ -63,17 +109,39 @@ type StepParams struct {
 	Map map[string]string `json:"map,omitempty"`
 
 	// Condition params
-	If   string `json:"if,omitempty"`
-	Then string `json:"then,omitempty"`
-	Else string `json:"else,omitempty"`
+	If   Condition `json:"if,omitempty"`
+	Else string    `json:"else,omitempty"`
 
 	// HTTP params
-	Method  string            `json:"method,omitempty"`
-	URL     string            `json:"url,omitempty"`
-	Headers map[string]string `json:"headers,omitempty"`
-	Body    interface{}       `json:"body,omitempty"`
+	Method  string                 `json:"method,omitempty"`
+	URL     string                 `json:"url,omitempty"`
+	Headers map[string]string      `json:"headers,omitempty"`
+	Body    map[string]interface{} `json:"body,omitempty"`
+	Query   map[string]interface{} `json:"query,omitempty"`
+}
 
-	// Log params
-	Message string `json:"message,omitempty"`
-	Include bool   `json:"include,omitempty"`
+type Operator string
+
+const (
+	EQ    Operator = "="
+	NE    Operator = "!="
+	GT    Operator = ">"
+	GTE   Operator = ">="
+	LT    Operator = "<"
+	LTE   Operator = "<="
+	IN    Operator = "in"
+	NOTIN Operator = "not in"
+	AND   Operator = "and"
+	OR    Operator = "or"
+)
+
+type ConditionOperand interface {
+	string | *Condition
+}
+
+// Condition represents a condition in the DAG
+type Condition struct {
+	Left     interface{} `json:"left"` // can be string or *Condition
+	Right    interface{} `json:"right"`
+	Operator Operator    `json:"operator"`
 }

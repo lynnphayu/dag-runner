@@ -1,0 +1,60 @@
+{
+  "input": {
+    "email": "lynnphay+9@gmail.com"
+  },
+  "dag": {
+    "id": "HTTP Example",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string"
+        }
+      },
+      "required": ["email"]
+    },
+    "outputSchema": {
+      "type": "array"
+    },
+    "steps": [
+      {
+        "id": "fetch",
+        "type": "http",
+        "method": "GET",
+        "url": "https://api.artic.edu/api/v1/artworks/129884",
+        "then": ["cond"]
+      },
+      {
+        "id": "cond",
+        "type": "condition",
+        "if": {
+          "left": "$results.fetch.StatusCode",
+          "right": 200,
+          "operator": "="
+        },
+        "else": ["query_user1"],
+        "then": ["query_user2"]
+      },
+      {
+        "id": "query_user1",
+        "type": "query",
+        "table": "users",
+        "select": ["id", "email"],
+        "where": {
+          "email": "lynnphay+9@gmail.com"
+        },
+        "output": "$results.query_user1"
+      },
+      {
+        "id": "query_user2",
+        "type": "query",
+        "table": "users",
+        "select": ["id", "email"],
+        "where": {
+          "email": "lynnphayu@gmail.com"
+        },
+        "output": "$results.query_user2"
+      }
+    ]
+  }
+}

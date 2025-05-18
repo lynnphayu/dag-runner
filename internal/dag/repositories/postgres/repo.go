@@ -1,4 +1,4 @@
-package db
+package respositories
 
 import (
 	"context"
@@ -9,13 +9,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Repository handles database operations for the DAG executor
-type Repository struct {
+// Postgres handles database operations for the DAG executor
+type Postgres struct {
 	pool *pgxpool.Pool
 }
 
-// NewRepository creates a new PostgreSQL repository
-func NewRepository(connStr string) (*Repository, error) {
+// NewPostgres creates a new PostgreSQL repository
+func NewPostgres(connStr string) (*Postgres, error) {
 	config, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse connection string: %w", err)
@@ -37,17 +37,17 @@ func NewRepository(connStr string) (*Repository, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	return &Repository{pool: pool}, nil
+	return &Postgres{pool: pool}, nil
 }
 
 // Close closes the database connection pool
-func (r *Repository) Close() error {
+func (r *Postgres) Close() error {
 	r.pool.Close()
 	return nil
 }
 
-// ExecuteQuery executes a query and returns the results
-func (r *Repository) ExecuteQuery(query string, args ...interface{}) ([]map[string]interface{}, error) {
+// Query executes a query and returns the results
+func (r *Postgres) Query(query string, args ...interface{}) ([]map[string]interface{}, error) {
 	// Execute query
 	rows, err := r.pool.Query(context.Background(), query, args...)
 	if err != nil {
@@ -89,8 +89,8 @@ func (r *Repository) ExecuteQuery(query string, args ...interface{}) ([]map[stri
 	return result, nil
 }
 
-// ExecuteInsert executes an insert query and returns the number of affected rows
-func (r *Repository) ExecuteInsert(query string, args ...interface{}) (int64, error) {
+// Insert executes an insert query and returns the number of affected rows
+func (r *Postgres) Insert(query string, args ...interface{}) (int64, error) {
 	result, err := r.pool.Exec(context.Background(), query, args...)
 	if err != nil {
 		return 0, fmt.Errorf("failed to execute insert: %w", err)
@@ -100,7 +100,7 @@ func (r *Repository) ExecuteInsert(query string, args ...interface{}) (int64, er
 }
 
 // ExecuteInTransaction executes the given function within a transaction
-func (r *Repository) ExecuteInTransaction(fn func(*pgx.Tx) error) error {
+func (r *Postgres) ExecuteInTransaction(fn func(*pgx.Tx) error) error {
 	tx, err := r.pool.Begin(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)

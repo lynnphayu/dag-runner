@@ -1,0 +1,56 @@
+{
+  "input": {
+    "email": "lynnphay+15@gmail.com"
+  },
+  "dag": {
+    "id": "Insert Example",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string"
+        }
+      },
+      "required": ["email"]
+    },
+    "outputSchema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "email": {
+            "type": "string"
+          },
+          "gg": {
+            "type": "string"
+          }
+        },
+        "required": ["id", "email"]
+      }
+    },
+    "steps": [
+      {
+        "id": "insert_user",
+        "type": "insert",
+        "table": "users",
+        "map": {
+          "email": "$input.email"
+        },
+        "then": ["query_user"]
+      },
+      {
+        "id": "query_user",
+        "type": "query",
+        "table": "users",
+        "select": ["id", "email"],
+        "where": {
+          "email": "$input.email"
+        },
+        "output": "$results.query_user"
+      }
+    ]
+  }
+}

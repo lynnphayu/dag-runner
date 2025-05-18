@@ -2,6 +2,9 @@ root = "."
 tmp_dir = "tmp"
 [build]
 pre_cmd = ["pwd"]
-cmd = "go build -o /tmp/main ."
+cmd = "go build -o ./tmp/main ."
 full_bin = "DATABASE_URL=postgresql://localhost/DAG ./tmp/main"
 log = "air.log"
+
+[misc]
+clean_on_exit = true
