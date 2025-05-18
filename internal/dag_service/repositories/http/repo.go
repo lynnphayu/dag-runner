@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/lynnphayu/dag-runner/internal/dag/flow"
+	"github.com/lynnphayu/dag-runner/pkg/dag"
 )
 
 // Postgres handles database operations for the DAG executor
@@ -61,27 +61,27 @@ func (r *Http) buildHeaders(headers map[string]string) http.Header {
 	return reqHeaders
 }
 
-func (r *Http) Get(path string, query map[string]interface{}, headers map[string]string) (*flow.ParsedResponse, error) {
+func (r *Http) Get(path string, query map[string]interface{}, headers map[string]string) (*dag.ParsedResponse, error) {
 	return r.execute(http.MethodGet, path, query, nil, headers)
 }
 
-func (r *Http) Post(path string, query map[string]interface{}, body map[string]interface{}, headers map[string]string) (*flow.ParsedResponse, error) {
+func (r *Http) Post(path string, query map[string]interface{}, body map[string]interface{}, headers map[string]string) (*dag.ParsedResponse, error) {
 	return r.execute(http.MethodPost, path, query, body, headers)
 }
 
-func (r *Http) Put(path string, query map[string]interface{}, body map[string]interface{}, headers map[string]string) (*flow.ParsedResponse, error) {
+func (r *Http) Put(path string, query map[string]interface{}, body map[string]interface{}, headers map[string]string) (*dag.ParsedResponse, error) {
 	return r.execute(http.MethodPut, path, query, body, headers)
 }
 
-func (r *Http) Delete(path string, query map[string]interface{}, headers map[string]string) (*flow.ParsedResponse, error) {
+func (r *Http) Delete(path string, query map[string]interface{}, headers map[string]string) (*dag.ParsedResponse, error) {
 	return r.execute(http.MethodDelete, path, query, nil, headers)
 }
 
-func (r *Http) Patch(path string, query map[string]interface{}, body map[string]interface{}, headers map[string]string) (*flow.ParsedResponse, error) {
+func (r *Http) Patch(path string, query map[string]interface{}, body map[string]interface{}, headers map[string]string) (*dag.ParsedResponse, error) {
 	return r.execute(http.MethodPatch, path, query, body, headers)
 }
 
-func (r *Http) execute(method string, path string, query map[string]interface{}, body map[string]interface{}, headers map[string]string) (*flow.ParsedResponse, error) {
+func (r *Http) execute(method string, path string, query map[string]interface{}, body map[string]interface{}, headers map[string]string) (*dag.ParsedResponse, error) {
 	// Build the request URL
 	parsedURL, err := r.buildRequestURL(method, path, query)
 	if err != nil {
@@ -114,7 +114,7 @@ func (r *Http) execute(method string, path string, query map[string]interface{},
 		return nil, fmt.Errorf("failed to decode response body: %v", err)
 	}
 
-	return &flow.ParsedResponse{
+	return &dag.ParsedResponse{
 		Data:       respBody,
 		Raw:        resp,
 		StatusCode: resp.StatusCode,

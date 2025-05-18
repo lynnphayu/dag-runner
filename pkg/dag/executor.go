@@ -1,4 +1,4 @@
-package flow
+package dag
 
 import (
 	"encoding/json"
@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/lynnphayu/dag-runner/internal/dag/domain"
 	"github.com/xeipuuv/gojsonschema"
 )
 
@@ -46,7 +45,7 @@ func NewExecutor(db Persist, http Http) (*Executor, error) {
 }
 
 // Execute runs the DAG with parallel execution of steps
-func (e *Executor) Execute(dag *domain.DAG, input map[string]interface{}) (interface{}, error) {
+func (e *Executor) Execute(dag *DAG, input map[string]interface{}) (interface{}, error) {
 	if err := validateSchema(dag.InputSchema, input); err != nil {
 		return nil, fmt.Errorf("input validation failed: %w", err)
 	}
@@ -105,8 +104,8 @@ func (e *Executor) Execute(dag *domain.DAG, input map[string]interface{}) (inter
 	return execution.output.(interface{}), nil
 }
 
-func (e *Executor) mapSteps(dag *domain.DAG) (map[string]*domain.Step, error) {
-	steps := make(map[string]*domain.Step)
+func (e *Executor) mapSteps(dag *DAG) (map[string]*Step, error) {
+	steps := make(map[string]*Step)
 	for _, step := range dag.Steps {
 		if _, ok := steps[step.ID]; ok {
 			return nil, fmt.Errorf("Duplicate step ID: %s", step.ID)
@@ -116,7 +115,7 @@ func (e *Executor) mapSteps(dag *domain.DAG) (map[string]*domain.Step, error) {
 	return steps, nil
 }
 
-func (e *Executor) independentSteps(dag *domain.DAG) []string {
+func (e *Executor) independentSteps(dag *DAG) []string {
 	dependentSteps := make(map[string]bool)
 	independentSteps := make([]string, 0)
 	for _, step := range dag.Steps {
@@ -136,16 +135,16 @@ func (e *Executor) independentSteps(dag *domain.DAG) []string {
 	return independentSteps
 }
 
-func ParseDAG(dagString []byte) (domain.DAG, error) {
-	var dag domain.DAG
+func ParseDAG(dagString []byte) (DAG, error) {
+	var dag DAG
 	err := json.Unmarshal([]byte(dagString), &dag)
 	if err != nil {
-		return domain.DAG{}, err
+		return DAG{}, err
 	}
 	return dag, nil
 }
 
-func validateSchema(schema domain.Schema, data interface{}) error {
+func validateSchema(schema Schema, data interface{}) error {
 	schemaLoader := gojsonschema.NewGoLoader(schema)
 	dataLoader := gojsonschema.NewGoLoader(data)
 

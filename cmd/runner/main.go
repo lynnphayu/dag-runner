@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/lynnphayu/dag-runner/internal/dag"
+	dag "github.com/lynnphayu/dag-runner/internal/dag_service"
 )
 
 func main() {

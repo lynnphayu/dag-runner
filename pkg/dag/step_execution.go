@@ -1,10 +1,9 @@
-package flow
+package dag
 
 import (
 	"fmt"
 	"sync"
 
-	"github.com/lynnphayu/dag-runner/internal/dag/domain"
 	utils "github.com/lynnphayu/dag-runner/pkg/utils"
 )
 
@@ -19,8 +18,8 @@ type Context struct {
 }
 
 type Execution struct {
-	dag      *domain.DAG
-	stepsMap map[string]*domain.Step
+	dag      *DAG
+	stepsMap map[string]*Step
 	context  *Context
 	output   interface{}
 
@@ -32,7 +31,7 @@ type Execution struct {
 }
 
 // initExecution executes a single step asynchronously and triggers dependent steps
-func (e *Execution) initExecution(step *domain.Step) {
+func (e *Execution) initExecution(step *Step) {
 	defer e.wg.Done()
 
 	for _, dep := range step.DependsOn {
@@ -76,31 +75,31 @@ func (e *Execution) initExecution(step *domain.Step) {
 }
 
 // executeStep executes a single step
-func (e *Execution) executeStep(step *domain.Step) (interface{}, error) {
+func (e *Execution) executeStep(step *Step) (interface{}, error) {
 	// Handle different step types
 	switch step.Type {
-	case domain.Query:
+	case Query:
 		return e.executeQuery(step)
-	case domain.Insert:
+	case Insert:
 		return e.executeInsert(step)
-	case domain.Update:
+	case Update:
 		return e.executeUpdate(step)
-	case domain.Delete:
+	case Delete:
 		return e.executeDelete(step)
-	case domain.Join:
+	case Join:
 		return e.executeJoin(step)
-	case domain.HTTP:
+	case HTTP:
 		return e.executeHTTP(step)
-	case domain.Cond:
+	case Cond:
 		return e.executeCondition(step)
-	case domain.Filter:
+	case Filter:
 		return e.executeFilter(step)
 	default:
 		return nil, fmt.Errorf("unsupported step type: %s", step.Type)
 	}
 }
 
-func (e *Execution) executeCondition(step *domain.Step) (interface{}, error) {
+func (e *Execution) executeCondition(step *Step) (interface{}, error) {
 	left := step.If.Left
 	right := step.If.Right
 	operator := step.Params.If.Operator
@@ -116,43 +115,43 @@ func (e *Execution) executeCondition(step *domain.Step) (interface{}, error) {
 	return nil, nil
 }
 
-func (e *Execution) executeInsert(step *domain.Step) (interface{}, error) {
+func (e *Execution) executeInsert(step *Step) (interface{}, error) {
 	data := resolveValues(step.Params.Filter, e.context).(map[string]interface{})
 	return (*e.executor.db).Create(step.Params.Table, data)
 }
 
-func (e *Execution) executeQuery(step *domain.Step) ([]interface{}, error) {
+func (e *Execution) executeQuery(step *Step) ([]interface{}, error) {
 	where := resolveValues(step.Params.Where, e.context).(map[string]interface{})
 	return (*e.executor.db).Retrieve(step.Params.Table, step.Params.Select, where)
 }
 
-func (e *Execution) executeUpdate(step *domain.Step) (interface{}, error) {
+func (e *Execution) executeUpdate(step *Step) (interface{}, error) {
 	data := resolveValues(step.Params.Filter, e.context).(map[string]interface{})
 	where := resolveValues(step.Params.Where, e.context).(map[string]interface{})
 	return (*e.executor.db).Update(step.Params.Table, data, where)
 }
 
-func (e *Execution) executeDelete(step *domain.Step) (interface{}, error) {
+func (e *Execution) executeDelete(step *Step) (interface{}, error) {
 	where := resolveValues(step.Params.Where, e.context).(map[string]interface{})
 	return (*e.executor.db).Delete(step.Params.Table, where)
 }
 
-func (e *Execution) executeHTTP(step *domain.Step) (interface{}, error) {
+func (e *Execution) executeHTTP(step *Step) (interface{}, error) {
 
 	query := resolveValues(step.Params.Query, e.context).(map[string]interface{})
 	body := resolveValues(step.Params.Body, e.context).(map[string]interface{})
 	headers := resolveValues(step.Params.Headers, e.context).(map[string]string)
 	url := resolveV2[string](step.Params.URL, e.context)
 	switch step.Params.Method {
-	case domain.GET:
+	case GET:
 		return (*e.executor.httpClient).Get(url, query, headers)
-	case domain.POST:
+	case POST:
 		return (*e.executor.httpClient).Post(url, query, body, headers)
-	case domain.PUT:
+	case PUT:
 		return (*e.executor.httpClient).Put(url, body, query, headers)
-	case domain.DELETE:
+	case DELETE:
 		return (*e.executor.httpClient).Delete(url, query, headers)
-	case domain.PATCH:
+	case PATCH:
 		return (*e.executor.httpClient).Patch(url, body, query, headers)
 	default:
 		return nil, fmt.Errorf("unsupported HTTP method: %s", step.Params.Method)
@@ -160,7 +159,7 @@ func (e *Execution) executeHTTP(step *domain.Step) (interface{}, error) {
 	}
 }
 
-func (e *Execution) executeJoin(step *domain.Step) (interface{}, error) {
+func (e *Execution) executeJoin(step *Step) (interface{}, error) {
 	// Get input data
 	var datasets [][]map[string]interface{}
 	if len(step.DependsOn) != 2 {
@@ -187,7 +186,7 @@ func (e *Execution) executeJoin(step *domain.Step) (interface{}, error) {
 	return performJoin(datasets, step.Params.On, step.Params.Type)
 }
 
-func (e *Execution) executeFilter(step *domain.Step) (interface{}, error) {
+func (e *Execution) executeFilter(step *Step) (interface{}, error) {
 	// Get input data
 	var dataset []interface{}
 	if len(step.DependsOn) != 1 {
@@ -201,18 +200,18 @@ func (e *Execution) executeFilter(step *domain.Step) (interface{}, error) {
 	return applyFilter(dataset, step.Params.Filter)
 }
 
-func eveluateCondition(left interface{}, right interface{}, operator domain.Operator, ctx *Context) bool {
+func eveluateCondition(left interface{}, right interface{}, operator Operator, ctx *Context) bool {
 	if v, ok := left.(string); ok {
 		resolvedLeft := resolveV2[interface{}](v, ctx)
 		left = resolvedLeft
-	} else if v, ok := left.(domain.Condition); ok {
+	} else if v, ok := left.(Condition); ok {
 		left = eveluateCondition(v.Left, v.Right, v.Operator, ctx)
 	}
 
 	if v, ok := right.(string); ok {
 		resolvedRight := resolveV2[interface{}](v, ctx)
 		right = resolvedRight
-	} else if v, ok := right.(domain.Condition); ok {
+	} else if v, ok := right.(Condition); ok {
 		right = eveluateCondition(v.Left, v.Right, v.Operator, ctx)
 	}
 	// Convert left and right to the same type for comparison
@@ -238,25 +237,25 @@ func eveluateCondition(left interface{}, right interface{}, operator domain.Oper
 		right = rightBool
 	}
 	switch operator {
-	case domain.EQ:
+	case EQ:
 		return left == right
-	case domain.NE:
+	case NE:
 		return left != right
-	case domain.GT:
+	case GT:
 		return left.(float64) > right.(float64)
-	case domain.GTE:
+	case GTE:
 		return left.(float64) >= right.(float64)
-	case domain.LT:
+	case LT:
 		return left.(float64) < right.(float64)
-	case domain.LTE:
+	case LTE:
 		return left.(float64) <= right.(float64)
-	case domain.IN:
+	case IN:
 		return contains(right.([]string), left.(string))
-	case domain.NOTIN:
+	case NOTIN:
 		return !contains(right.([]string), left.(string))
-	case domain.AND:
+	case AND:
 		return left.(bool) && right.(bool)
-	case domain.OR:
+	case OR:
 		return left.(bool) || right.(bool)
 	default:
 		return false

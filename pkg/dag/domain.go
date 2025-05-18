@@ -1,4 +1,4 @@
-package domain
+package dag
 
 // DAG represents a directed acyclic graph of processing steps
 type DAG struct {

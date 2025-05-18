@@ -5,18 +5,17 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/lynnphayu/dag-runner/internal/dag/domain"
-	"github.com/lynnphayu/dag-runner/internal/dag/flow"
-	httpClient "github.com/lynnphayu/dag-runner/internal/dag/repositories/http"
-	postgres "github.com/lynnphayu/dag-runner/internal/dag/repositories/postgres"
+	httpClient "github.com/lynnphayu/dag-runner/internal/dag_service/repositories/http"
+	postgres "github.com/lynnphayu/dag-runner/internal/dag_service/repositories/postgres"
+	dag "github.com/lynnphayu/dag-runner/pkg/dag"
 )
 
 type Server struct {
-	executor *flow.Executor
+	executor *dag.Executor
 }
 
 type ExecuteRequest struct {
-	DAG   domain.DAG             `json:"dag"`
+	DAG   dag.DAG                `json:"dag"`
 	Input map[string]interface{} `json:"input"`
 }
 
@@ -34,7 +33,7 @@ func NewServer(connStr string) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create http: %w", err)
 	}
-	executor, err := flow.NewExecutor(persistent, http)
+	executor, err := dag.NewExecutor(persistent, http)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create executor: %w", err)
 	}

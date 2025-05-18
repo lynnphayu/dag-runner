@@ -1,4 +1,4 @@
-package flow
+package dag
 
 import (
 	"database/sql"
@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/expr-lang/expr"
-	"github.com/lynnphayu/dag-runner/internal/dag/domain"
 	"github.com/tidwall/gjson"
 )
 
@@ -24,7 +23,7 @@ func mergeMaps(maps ...map[string]interface{}) map[string]interface{} {
 }
 
 // performJoin joins two datasets based on join conditions
-func performJoin(datasets [][]map[string]interface{}, on map[string]string, joinType domain.JoinType) ([]map[string]interface{}, error) {
+func performJoin(datasets [][]map[string]interface{}, on map[string]string, joinType JoinType) ([]map[string]interface{}, error) {
 	if len(datasets) != 2 {
 		return nil, fmt.Errorf("join requires exactly two datasets")
 	}
@@ -36,7 +35,7 @@ func performJoin(datasets [][]map[string]interface{}, on map[string]string, join
 	// Perform join
 	result := make([]map[string]interface{}, 0)
 	switch joinType {
-	case domain.Inner:
+	case Inner:
 		for _, leftRow := range left {
 			for _, rightRow := range right {
 				if matchJoinConditions(leftRow, rightRow, on) {
@@ -44,7 +43,7 @@ func performJoin(datasets [][]map[string]interface{}, on map[string]string, join
 				}
 			}
 		}
-	case domain.Left:
+	case Left:
 		for _, leftRow := range left {
 			matched := false
 			for _, rightRow := range right {
@@ -58,7 +57,7 @@ func performJoin(datasets [][]map[string]interface{}, on map[string]string, join
 				result = append(result, mergeMaps(leftRow))
 			}
 		}
-	case domain.Right:
+	case Right:
 		for _, rightRow := range right {
 			matched := false
 			for _, leftRow := range left {
