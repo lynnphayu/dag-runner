@@ -30,9 +30,9 @@ type Step struct {
 	Type string `json:"type"`
 	// Input     interface{} `json:"input,omitempty"` // Can be string or []string
 	Params
-	Then      []string `json:"then,omitempty"` // next steps
-	DependsOn []string `json:"dependsOn,omitempty"`
-	Output    string   `json:"output,omitempty"`
+	Then      []string    `json:"then,omitempty"` // next steps
+	DependsOn []string    `json:"dependsOn,omitempty"`
+	Output    interface{} `json:"output,omitempty"`
 }
 
 type Params struct {
@@ -45,18 +45,24 @@ type Params struct {
 }
 
 type DbOperationParams struct {
-	Table string `json:"table"`
+	Table string                 `json:"table"`
+	Where map[string]interface{} `json:"where,omitempty"`
 	QueryParams
 	InsertParams
+	UpdateParams
+	DeleteParams
 }
 
 type QueryParams struct {
-	Select []string               `json:"select"`
-	Where  map[string]interface{} `json:"where"`
+	Select []string `json:"select"`
 }
 type InsertParams struct {
 	Map map[string]string `json:"map"`
 }
+type UpdateParams struct {
+	Set map[string]interface{} `json:"set"`
+}
+type DeleteParams struct{}
 
 type JoinParams struct {
 	On    map[string]string `json:"on"`

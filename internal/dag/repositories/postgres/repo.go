@@ -90,7 +90,7 @@ func (r *Postgres) Query(query string, args ...interface{}) ([]map[string]interf
 }
 
 // Insert executes an insert query and returns the number of affected rows
-func (r *Postgres) Insert(query string, args ...interface{}) (int64, error) {
+func (r *Postgres) Mutate(query string, args ...interface{}) (int64, error) {
 	result, err := r.pool.Exec(context.Background(), query, args...)
 	if err != nil {
 		return 0, fmt.Errorf("failed to execute insert: %w", err)

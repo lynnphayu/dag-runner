@@ -1,0 +1,49 @@
+{
+  "input": {
+    "email": "lynnphay@gmail.com"
+  },
+  "dag": {
+    "id": "Insert Example",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string"
+        }
+      },
+      "required": ["email"]
+    },
+    "outputSchema": {
+      "type": "array"
+    },
+    "steps": [
+      {
+        "id": "query_user",
+        "type": "query",
+        "table": "users",
+        "select": ["id", "email"],
+        "where": {},
+        "then": ["join"]
+      },
+      {
+        "id": "query_profile",
+        "type": "query",
+        "table": "profiles",
+        "select": ["id", "persona", "user_id"],
+        "where": {},
+        "then": ["join"]
+      },
+      {
+        "id": "join",
+        "type": "join",
+        "left": "query_user",
+        "right": "query_profile",
+        "dependsOn": ["query_user", "query_profile"],
+        "on": {
+          "id": "user_id"
+        },
+        "output": "$results.join"
+      }
+    ]
+  }
+}

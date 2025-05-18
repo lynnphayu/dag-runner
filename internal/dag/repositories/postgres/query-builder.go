@@ -3,9 +3,6 @@ package respositories
 import (
 	"fmt"
 	"strings"
-
-	"github.com/expr-lang/expr"
-	"github.com/lynnphayu/swift/dagflow/internal/dag/domain"
 )
 
 // BuildWhereClause constructs a WHERE clause from the given conditions
@@ -63,7 +60,7 @@ func BuildWhereClause(conditions map[string]interface{}) (string, []interface{})
 }
 
 // BuildInsertQuery constructs an INSERT query from the given parameters
-func BuildInsertQuery(table string, mapping map[string]string, context *domain.Context) (string, []interface{}, error) {
+func BuildInsertQuery(table string, mapping map[string]interface{}) (string, []interface{}, error) {
 	var columns []string
 	var placeholders []string
 	var args []interface{}
@@ -77,14 +74,10 @@ func BuildInsertQuery(table string, mapping map[string]string, context *domain.C
 	for i, col := range columns {
 		field := mapping[col]
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
-		val, err := resolveValue(field, context)
-		if err != nil {
-			return "", nil, fmt.Errorf("error resolving field '%s': %v", field, err)
-		}
-		if val == nil {
+		if field == nil {
 			return "", nil, fmt.Errorf("field '%s' cannot be null", field)
 		}
-		args = append(args, val)
+		args = append(args, field)
 	}
 	placeholders = []string{fmt.Sprintf("(%s)", strings.Join(placeholders, ", "))}
 
@@ -98,18 +91,32 @@ func BuildInsertQuery(table string, mapping map[string]string, context *domain.C
 	return query, args, nil
 }
 
-// resolveValue resolves a value from the context if it's a reference
-func resolveValue(value interface{}, context *domain.Context) (interface{}, error) {
-	if str, ok := value.(string); ok && strings.HasPrefix(str, "$") {
-		env := map[string]interface{}{
-			"input":   context.Input,
-			"results": context.Results,
-		}
-		result, err := expr.Eval(str[1:], env)
-		if err != nil {
-			return nil, fmt.Errorf("error evaluating expression '%s': %v", str, err)
-		}
-		return result, nil
+func BuildUpdateQuery(table string, mapping map[string]interface{}, where map[string]interface{}) (string, []interface{}) {
+	var setClauses []string
+	var args []interface{}
+	var i int
+	for field, value := range mapping {
+		setClauses = append(setClauses, fmt.Sprintf("%s = $%d", field, i+1))
+		args = append(args, value)
+		i++
 	}
-	return value, nil
+	whereClause, whereArgs := BuildWhereClause(where)
+	args = append(args, whereArgs...)
+	query := fmt.Sprintf(
+		"UPDATE %s SET %s WHERE %s",
+		table,
+		strings.Join(setClauses, ", "),
+		whereClause,
+	)
+	return query, args
+}
+
+func BuildDeleteQuery(table string, where map[string]interface{}) (string, []interface{}) {
+	whereClause, whereArgs := BuildWhereClause(where)
+	query := fmt.Sprintf(
+		"DELETE FROM %s WHERE %s",
+		table,
+		whereClause,
+	)
+	return query, whereArgs
 }

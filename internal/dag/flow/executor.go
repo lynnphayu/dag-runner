@@ -168,7 +168,7 @@ func (e *Execution) executeStepAsync(step *domain.Step) {
 	(*e.context.Results)[step.ID] = result
 	e.completionChannel <- step.ID
 	if step.Output != "" {
-		e.output = resolveV2[interface{}](step.Output, e.context)
+		e.output = resolveValues(step.Output, e.context)
 	}
 
 	for _, dep := range step.Then {
@@ -189,6 +189,10 @@ func (e *Execution) executeStep(step *domain.Step) (interface{}, error) {
 		return e.executeQuery(step)
 	case "insert":
 		return e.executeInsert(step)
+	case "update":
+		return e.executeUpdate(step)
+	case "delete":
+		return e.executeDelete(step)
 	case "join":
 		return e.executeJoin(step)
 	case "http":
@@ -280,11 +284,12 @@ func (e *Execution) executeCondition(step *domain.Step) (interface{}, error) {
 }
 
 func (e *Execution) executeInsert(step *domain.Step) (interface{}, error) {
-	query, args, err := postgres.BuildInsertQuery(step.Params.Table, step.Params.Map, e.context)
+	data := resolveValues(step.Params.Filter, e.context).(map[string]interface{})
+	query, args, err := postgres.BuildInsertQuery(step.Params.Table, data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build insert query: %w", err)
 	}
-	return e.executor.db.Insert(query, args...)
+	return e.executor.db.Mutate(query, args...)
 }
 
 func (e *Execution) executeQuery(step *domain.Step) (interface{}, error) {
@@ -296,6 +301,19 @@ func (e *Execution) executeQuery(step *domain.Step) (interface{}, error) {
 		return e.executor.db.Query(query, args...)
 	}
 	return e.executor.db.Query(query)
+}
+
+func (e *Execution) executeUpdate(step *domain.Step) (interface{}, error) {
+	data := resolveValues(step.Params.Filter, e.context).(map[string]interface{})
+	where := resolveValues(step.Params.Where, e.context).(map[string]interface{})
+	query, args := postgres.BuildUpdateQuery(step.Params.Table, data, where)
+	return e.executor.db.Mutate(query, args...)
+}
+
+func (e *Execution) executeDelete(step *domain.Step) (interface{}, error) {
+	where := resolveValues(step.Params.Where, e.context).(map[string]interface{})
+	query, args := postgres.BuildDeleteQuery(step.Params.Table, where)
+	return e.executor.db.Mutate(query, args...)
 }
 
 func (e *Execution) executeHTTP(step *domain.Step) (interface{}, error) {
