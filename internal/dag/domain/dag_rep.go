@@ -7,8 +7,6 @@ type DAG struct {
 	InputSchema  Schema `json:"inputSchema"`
 	OutputSchema Schema `json:"outputSchema"`
 	Steps        []Step `json:"steps"`
-	Entry        string `json:"entry"`
-	Result       string `json:"result"`
 }
 
 // Schema represents a JSON schema for input/output validation
