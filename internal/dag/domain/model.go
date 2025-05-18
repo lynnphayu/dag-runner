@@ -24,10 +24,24 @@ type Schema struct {
 	Required   []string          `json:"required,omitempty"`
 }
 
+type StepType string
+
+const (
+	Query  StepType = "query"
+	Insert StepType = "insert"
+	Update StepType = "update"
+	Delete StepType = "delete"
+	Cond   StepType = "condition"
+	HTTP   StepType = "http"
+	Map    StepType = "map"
+	Join   StepType = "join"
+	Filter StepType = "filter"
+)
+
 // Step represents a single step in the DAG
 type Step struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
+	ID   string   `json:"id"`
+	Type StepType `json:"type"`
 	// Input     interface{} `json:"input,omitempty"` // Can be string or []string
 	Params
 	Then      []string    `json:"then,omitempty"` // next steps
