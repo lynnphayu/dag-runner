@@ -26,9 +26,11 @@ type Execution struct {
 	context  *domain.Context
 	output   interface{}
 
-	executor     *Executor
-	wg           *sync.WaitGroup
-	errorChannel chan error
+	waitList          *sync.Map
+	executor          *Executor
+	wg                *sync.WaitGroup
+	errorChannel      chan error
+	completionChannel chan string
 }
 
 // NewExecutor creates a new DAG executor
@@ -65,9 +67,11 @@ func (e *Executor) Execute(dag *domain.DAG, input map[string]interface{}) (inter
 			Results: &map[string]interface{}{},
 			Input:   &input,
 		},
-		executor:     e,
-		wg:           &sync.WaitGroup{},
-		errorChannel: make(chan error, 1),
+		executor:          e,
+		waitList:          &sync.Map{},
+		wg:                &sync.WaitGroup{},
+		errorChannel:      make(chan error, 1),
+		completionChannel: make(chan string, 100),
 	}
 
 	// Create wait group for tracking goroutines
@@ -129,7 +133,7 @@ func (e *Executor) independentSteps(dag *domain.DAG) []string {
 		}
 	}
 	for _, step := range dag.Steps {
-		if !dependentSteps[step.ID] {
+		if !dependentSteps[step.ID] && len(step.DependsOn) == 0 {
 			independentSteps = append(independentSteps, step.ID)
 		}
 	}
@@ -140,11 +144,21 @@ func (e *Executor) independentSteps(dag *domain.DAG) []string {
 func (e *Execution) executeStepAsync(step *domain.Step) {
 	defer e.wg.Done()
 
-	fmt.Println("Executing step:", step.ID)
+	for _, dep := range step.DependsOn {
+		if _, ok := (*e.context.Results)[dep]; !ok {
+			// wait for dependent steps to complete from completion channel
+			for stepId := range e.completionChannel {
+				if dep == stepId {
+					break
+				}
+			}
+		}
+	}
 
-	// Execute the step
+	fmt.Println("Executing step:", step.ID)
 	result, err := e.executeStep(step)
 	fmt.Println("Step result:", step.ID, result)
+
 	if err != nil {
 		e.errorChannel <- fmt.Errorf("failed to execute step %s: %w", step.ID, err)
 		return
@@ -152,14 +166,18 @@ func (e *Execution) executeStepAsync(step *domain.Step) {
 
 	// Store the result
 	(*e.context.Results)[step.ID] = result
+	e.completionChannel <- step.ID
 	if step.Output != "" {
 		e.output = resolveV2[interface{}](step.Output, e.context)
 	}
 
 	for _, dep := range step.Then {
-		e.wg.Add(1)
+		if _, ok := e.waitList.Load(dep); !ok {
+			e.waitList.Store(dep, true)
+			e.wg.Add(1)
+			go e.executeStepAsync(e.stepsMap[dep])
+		}
 
-		go e.executeStepAsync(e.stepsMap[dep])
 	}
 }
 
@@ -171,8 +189,8 @@ func (e *Execution) executeStep(step *domain.Step) (interface{}, error) {
 		return e.executeQuery(step)
 	case "insert":
 		return e.executeInsert(step)
-	// case "join":
-	// 	return e.executeJoin(step)
+	case "join":
+		return e.executeJoin(step)
 	case "http":
 		return e.executeHTTP(step)
 	case "condition":
@@ -294,46 +312,32 @@ func (e *Execution) executeHTTP(step *domain.Step) (interface{}, error) {
 	return result, nil
 }
 
-// func (e *Execution) executeJoin(step *domain.Step) (interface{}, error) {
-// 	// Get input data
-// 	var datasets [][]map[string]interface{}
-// 	if len(step.DependsOn) != 2 {
-// 		return nil, fmt.Errorf("join step requires exactly two dependent steps")
-// 	}
-// 	if step.Params.Left == "" {
-// 		return nil, fmt.Errorf("join step requires left parameter")
-// 	}
-// 	if step.Params.Right == "" {
-// 		return nil, fmt.Errorf("join step requires right parameter")
-// 	}
-// 	if !contains(strings.Split(step.DependsOn[0], "."), step.Params.Left) && !contains(strings.Split(step.DependsOn[0], "."), step.Params.Left) {
-// 		return nil, fmt.Errorf("join step left parameter must be one of the dependent steps")
-// 	}
-// 	if !contains(strings.Split(step.DependsOn[0], "."), step.Params.Right) && !contains(strings.Split(step.DependsOn[0], "."), step.Params.Right) {
-// 		return nil, fmt.Errorf("join step right parameter must be one of the dependent steps")
-// 	}
-// 	if step.Params.Left == step.Params.Right {
-// 		return nil, fmt.Errorf("join step left and right parameters cannot be the same")
-// 	}
-// 	if (*e.context.Results)[step.DependsOn[0]] == nil {
-// 		return nil, fmt.Errorf("join step left dependent step %s not found", step.DependsOn[0])
-// 	}
-// 	if (*e.context.Results)[step.DependsOn[1]] == nil {
-// 		return nil, fmt.Errorf("join step right dependent step %s not found", step.DependsOn[1])
-// 	}
-// 	if v, ok := (*e.context.Results)[step.DependsOn[0]].([]map[string]interface{}); ok {
-// 		datasets = append(datasets, v)
-// 	} else {
-// 		return nil, fmt.Errorf("join step left dependent step %s is not a slice", step.DependsOn[0])
-// 	}
-// 	if v, ok := (*e.context.Results)[step.DependsOn[1]].([]map[string]interface{}); ok {
-// 		datasets = append(datasets, v)
-// 	} else {
-// 		return nil, fmt.Errorf("join step right dependent step %s is not a slice", step.DependsOn[1])
-// 	}
+func (e *Execution) executeJoin(step *domain.Step) (interface{}, error) {
+	// Get input data
+	var datasets [][]map[string]interface{}
+	if len(step.DependsOn) != 2 {
+		return nil, fmt.Errorf("join step requires exactly two dependent steps")
+	}
+	if step.Params.Left == "" {
+		return nil, fmt.Errorf("join step requires left parameter")
+	}
+	if step.Params.Right == "" {
+		return nil, fmt.Errorf("join step requires right parameter")
+	}
 
-// 	return performJoin(datasets, step.Params.On, step.Params.Type)
-// }
+	if v, ok := (*e.context.Results)[step.Params.Left]; ok {
+		datasets = append(datasets, v.([]map[string]interface{}))
+	} else {
+		return nil, fmt.Errorf("join step left dependent step %s is not a slice", step.DependsOn[0])
+	}
+	if v, ok := (*e.context.Results)[step.Params.Right]; ok {
+		datasets = append(datasets, v.([]map[string]interface{}))
+	} else {
+		return nil, fmt.Errorf("join step right dependent step %s is not a slice", step.DependsOn[1])
+	}
+
+	return performJoin(datasets, step.Params.On, step.Params.Type)
+}
 
 func contains(slice []string, str string) bool {
 	for _, s := range slice {

@@ -30,9 +30,9 @@ type Step struct {
 	Type string `json:"type"`
 	// Input     interface{} `json:"input,omitempty"` // Can be string or []string
 	Params
-	// Next   []string `json:"next,omitempty"`
-	Then   []string `json:"then,omitempty"`
-	Output string   `json:"output,omitempty"`
+	Then      []string `json:"then,omitempty"` // next steps
+	DependsOn []string `json:"dependsOn,omitempty"`
+	Output    string   `json:"output,omitempty"`
 }
 
 type Params struct {
