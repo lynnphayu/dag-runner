@@ -2,11 +2,9 @@ package flow
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/lynnphayu/dag-runner/internal/dag/domain"
-	postgres "github.com/lynnphayu/dag-runner/internal/dag/repositories/postgres"
 	utils "github.com/lynnphayu/dag-runner/pkg/utils"
 )
 
@@ -120,49 +118,46 @@ func (e *Execution) executeCondition(step *domain.Step) (interface{}, error) {
 
 func (e *Execution) executeInsert(step *domain.Step) (interface{}, error) {
 	data := resolveValues(step.Params.Filter, e.context).(map[string]interface{})
-	query, args, err := postgres.BuildInsertQuery(step.Params.Table, data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build insert query: %w", err)
-	}
-	return e.executor.db.Mutate(query, args...)
+	return (*e.executor.db).Create(step.Params.Table, data)
 }
 
-func (e *Execution) executeQuery(step *domain.Step) (interface{}, error) {
-	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(step.Params.Select, ", "), step.Params.Table)
-	if len(step.Params.Where) > 0 {
-		resolvedQuery := resolveValues(step.Params.Where, e.context)
-		whereClause, args := postgres.BuildWhereClause(resolvedQuery.(map[string]interface{}))
-		query += " WHERE " + whereClause
-		return e.executor.db.Query(query, args...)
-	}
-	return e.executor.db.Query(query)
+func (e *Execution) executeQuery(step *domain.Step) ([]interface{}, error) {
+	where := resolveValues(step.Params.Where, e.context).(map[string]interface{})
+	return (*e.executor.db).Retrieve(step.Params.Table, step.Params.Select, where)
 }
 
 func (e *Execution) executeUpdate(step *domain.Step) (interface{}, error) {
 	data := resolveValues(step.Params.Filter, e.context).(map[string]interface{})
 	where := resolveValues(step.Params.Where, e.context).(map[string]interface{})
-	query, args := postgres.BuildUpdateQuery(step.Params.Table, data, where)
-	return e.executor.db.Mutate(query, args...)
+	return (*e.executor.db).Update(step.Params.Table, data, where)
 }
 
 func (e *Execution) executeDelete(step *domain.Step) (interface{}, error) {
 	where := resolveValues(step.Params.Where, e.context).(map[string]interface{})
-	query, args := postgres.BuildDeleteQuery(step.Params.Table, where)
-	return e.executor.db.Mutate(query, args...)
+	return (*e.executor.db).Delete(step.Params.Table, where)
 }
 
 func (e *Execution) executeHTTP(step *domain.Step) (interface{}, error) {
-	result, err := e.executor.httpClient.Execute(
-		step.Params.Method,
-		step.Params.URL,
-		resolveValues(step.Params.Query, e.context).(map[string]interface{}),
-		resolveValues(step.Params.Body, e.context).(map[string]interface{}),
-		resolveValues(step.Params.Headers, e.context).(map[string]string),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute HTTP request: %w", err)
+
+	query := resolveValues(step.Params.Query, e.context).(map[string]interface{})
+	body := resolveValues(step.Params.Body, e.context).(map[string]interface{})
+	headers := resolveValues(step.Params.Headers, e.context).(map[string]string)
+	url := resolveV2[string](step.Params.URL, e.context)
+	switch step.Params.Method {
+	case domain.GET:
+		return (*e.executor.httpClient).Get(url, query, headers)
+	case domain.POST:
+		return (*e.executor.httpClient).Post(url, query, body, headers)
+	case domain.PUT:
+		return (*e.executor.httpClient).Put(url, body, query, headers)
+	case domain.DELETE:
+		return (*e.executor.httpClient).Delete(url, query, headers)
+	case domain.PATCH:
+		return (*e.executor.httpClient).Patch(url, body, query, headers)
+	default:
+		return nil, fmt.Errorf("unsupported HTTP method: %s", step.Params.Method)
+
 	}
-	return result, nil
 }
 
 func (e *Execution) executeJoin(step *domain.Step) (interface{}, error) {
@@ -194,12 +189,12 @@ func (e *Execution) executeJoin(step *domain.Step) (interface{}, error) {
 
 func (e *Execution) executeFilter(step *domain.Step) (interface{}, error) {
 	// Get input data
-	var dataset []map[string]interface{}
+	var dataset []interface{}
 	if len(step.DependsOn) != 1 {
 		return nil, fmt.Errorf("filter step requires exactly one dependent step")
 	}
 	if v, ok := (*e.context.Results)[step.DependsOn[0]]; ok {
-		dataset = v.([]map[string]interface{})
+		dataset = v.([]interface{})
 	} else {
 		return nil, fmt.Errorf("filter step dependent step %s is not a slice", step.DependsOn[0])
 	}

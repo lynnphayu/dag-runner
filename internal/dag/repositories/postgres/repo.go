@@ -47,7 +47,7 @@ func (r *Postgres) Close() error {
 }
 
 // Query executes a query and returns the results
-func (r *Postgres) Query(query string, args ...interface{}) ([]map[string]interface{}, error) {
+func (r *Postgres) query(query string, args ...interface{}) ([]interface{}, error) {
 	// Execute query
 	rows, err := r.pool.Query(context.Background(), query, args...)
 	if err != nil {
@@ -63,7 +63,7 @@ func (r *Postgres) Query(query string, args ...interface{}) ([]map[string]interf
 	}
 
 	// Prepare result
-	result := make([]map[string]interface{}, 0)
+	result := make([]interface{}, 0)
 
 	// Scan rows using Values() for more efficient scanning
 	for rows.Next() {
@@ -90,7 +90,7 @@ func (r *Postgres) Query(query string, args ...interface{}) ([]map[string]interf
 }
 
 // Insert executes an insert query and returns the number of affected rows
-func (r *Postgres) Mutate(query string, args ...interface{}) (int64, error) {
+func (r *Postgres) mutate(query string, args ...interface{}) (int64, error) {
 	result, err := r.pool.Exec(context.Background(), query, args...)
 	if err != nil {
 		return 0, fmt.Errorf("failed to execute insert: %w", err)
@@ -100,7 +100,7 @@ func (r *Postgres) Mutate(query string, args ...interface{}) (int64, error) {
 }
 
 // ExecuteInTransaction executes the given function within a transaction
-func (r *Postgres) ExecuteInTransaction(fn func(*pgx.Tx) error) error {
+func (r *Postgres) executeInTransaction(fn func(*pgx.Tx) error) error {
 	tx, err := r.pool.Begin(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -118,4 +118,27 @@ func (r *Postgres) ExecuteInTransaction(fn func(*pgx.Tx) error) error {
 	}
 
 	return nil
+}
+
+func (r *Postgres) Create(table string, mapping map[string]interface{}) (interface{}, error) {
+	query, args, err := BuildInsertQuery(table, mapping)
+	if err != nil {
+		return nil, err
+	}
+	return r.mutate(query, args...)
+}
+
+func (r *Postgres) Update(table string, mapping map[string]interface{}, where map[string]interface{}) (interface{}, error) {
+	query, args := BuildUpdateQuery(table, mapping, where)
+	return r.mutate(query, args...)
+}
+
+func (r *Postgres) Retrieve(table string, columns []string, where map[string]interface{}) ([]interface{}, error) {
+	query, args := BuildSelectQuery(table, columns, where)
+	return r.query(query, args...)
+}
+
+func (r *Postgres) Delete(table string, where map[string]interface{}) (interface{}, error) {
+	query, args := BuildDeleteQuery(table, where)
+	return r.mutate(query, args...)
 }

@@ -7,6 +7,8 @@ import (
 
 	"github.com/lynnphayu/dag-runner/internal/dag/domain"
 	"github.com/lynnphayu/dag-runner/internal/dag/flow"
+	httpClient "github.com/lynnphayu/dag-runner/internal/dag/repositories/http"
+	postgres "github.com/lynnphayu/dag-runner/internal/dag/repositories/postgres"
 )
 
 type Server struct {
@@ -24,7 +26,15 @@ type ExecuteResponse struct {
 }
 
 func NewServer(connStr string) (*Server, error) {
-	executor, err := flow.NewExecutor(connStr)
+	persistent, err := postgres.NewPostgres(connStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create persistent: %w", err)
+	}
+	http, err := httpClient.NewHttp()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create http: %w", err)
+	}
+	executor, err := flow.NewExecutor(persistent, http)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create executor: %w", err)
 	}

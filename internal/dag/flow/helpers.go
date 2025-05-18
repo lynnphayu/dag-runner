@@ -91,12 +91,12 @@ func matchJoinConditions(left, right map[string]interface{}, on map[string]strin
 
 // applyFilter filters data based on conditions
 func applyFilter(data interface{}, conditions map[string]interface{}) (interface{}, error) {
-	dataset, ok := data.([]map[string]interface{})
+	dataset, ok := data.([]interface{})
 	if !ok {
 		return nil, fmt.Errorf("filter input must be array of maps")
 	}
 
-	result := make([]map[string]interface{}, 0)
+	result := make([]interface{}, 0)
 	for _, item := range dataset {
 		if matchConditions(item, conditions) {
 			result = append(result, item)
@@ -107,20 +107,26 @@ func applyFilter(data interface{}, conditions map[string]interface{}) (interface
 }
 
 // matchConditions checks if an item matches filter conditions
-func matchConditions(item map[string]interface{}, conditions map[string]interface{}) bool {
+func matchConditions(item interface{}, conditions map[string]interface{}) bool {
 	for key, condition := range conditions {
-		switch cond := condition.(type) {
-		case map[string]interface{}:
-			for op, value := range cond {
-				if !evaluateOperator(item[key], op, value) {
+		if itm, ok := item.(map[string]interface{}); ok {
+			switch cond := condition.(type) {
+			case map[string]interface{}:
+				for op, value := range cond {
+					if !evaluateOperator(itm[key], op, value) {
+						return false
+					}
+
+				}
+			default:
+				if !reflect.DeepEqual(itm[key], condition) {
 					return false
 				}
 			}
-		default:
-			if !reflect.DeepEqual(item[key], condition) {
-				return false
-			}
+		} else {
+			return false
 		}
+
 	}
 	return true
 }

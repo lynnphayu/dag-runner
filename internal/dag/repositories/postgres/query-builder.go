@@ -5,8 +5,29 @@ import (
 	"strings"
 )
 
+func BuildSelectQuery(table string, columns []string, where map[string]interface{}) (string, []interface{}) {
+	if len(columns) == 0 {
+		columns = append(columns, "*")
+	}
+	base := fmt.Sprintf(
+		"SELECT %s FROM %s",
+		strings.Join(columns, ", "),
+		table,
+	)
+	if len(where) != 0 {
+		whereClause, whereArgs := BuildWhereClause(table, where)
+		base = fmt.Sprintf(
+			"%s WHERE %s",
+			base,
+			whereClause,
+		)
+		return base, whereArgs
+	}
+	return base, nil
+}
+
 // BuildWhereClause constructs a WHERE clause from the given conditions
-func BuildWhereClause(conditions map[string]interface{}) (string, []interface{}) {
+func BuildWhereClause(table string, conditions map[string]interface{}) (string, []interface{}) {
 	var clauses []string
 	var args []interface{}
 	var i int
@@ -100,7 +121,7 @@ func BuildUpdateQuery(table string, mapping map[string]interface{}, where map[st
 		args = append(args, value)
 		i++
 	}
-	whereClause, whereArgs := BuildWhereClause(where)
+	whereClause, whereArgs := BuildWhereClause(table, where)
 	args = append(args, whereArgs...)
 	query := fmt.Sprintf(
 		"UPDATE %s SET %s WHERE %s",
@@ -112,7 +133,7 @@ func BuildUpdateQuery(table string, mapping map[string]interface{}, where map[st
 }
 
 func BuildDeleteQuery(table string, where map[string]interface{}) (string, []interface{}) {
-	whereClause, whereArgs := BuildWhereClause(where)
+	whereClause, whereArgs := BuildWhereClause(table, where)
 	query := fmt.Sprintf(
 		"DELETE FROM %s WHERE %s",
 		table,

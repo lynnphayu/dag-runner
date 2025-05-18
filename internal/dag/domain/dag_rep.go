@@ -102,8 +102,18 @@ type ConditionParams struct {
 	Else []string  `json:"else"`
 }
 
+type SupportedHTTPMethods string
+
+const (
+	GET    SupportedHTTPMethods = "GET"
+	POST   SupportedHTTPMethods = "POST"
+	PUT    SupportedHTTPMethods = "PUT"
+	DELETE SupportedHTTPMethods = "DELETE"
+	PATCH  SupportedHTTPMethods = "PATCH"
+)
+
 type HTTPParams struct {
-	Method  string                 `json:"method"`
+	Method  SupportedHTTPMethods   `json:"method"`
 	URL     string                 `json:"url"`
 	Headers map[string]string      `json:"headers,omitempty"`
 	Body    map[string]interface{} `json:"body,omitempty"`

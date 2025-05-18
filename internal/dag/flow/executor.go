@@ -3,33 +3,45 @@ package flow
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
 
 	"github.com/lynnphayu/dag-runner/internal/dag/domain"
-	http "github.com/lynnphayu/dag-runner/internal/dag/repositories/http"
-	postgres "github.com/lynnphayu/dag-runner/internal/dag/repositories/postgres"
 	"github.com/xeipuuv/gojsonschema"
 )
 
+type Persist interface {
+	Create(table string, data map[string]interface{}) (interface{}, error)
+	Retrieve(table string, select_ []string, where map[string]interface{}) ([]interface{}, error)
+	Update(table string, data map[string]interface{}, where map[string]interface{}) (interface{}, error)
+	Delete(table string, where map[string]interface{}) (interface{}, error)
+}
+
+type ParsedResponse struct {
+	Data       interface{}
+	Raw        *http.Response
+	StatusCode int
+}
+
+type Http interface {
+	Post(url string, query map[string]interface{}, body map[string]interface{}, headers map[string]string) (*ParsedResponse, error)
+	Get(url string, query map[string]interface{}, headers map[string]string) (*ParsedResponse, error)
+	Put(url string, body map[string]interface{}, query map[string]interface{}, headers map[string]string) (*ParsedResponse, error)
+	Delete(url string, query map[string]interface{}, headers map[string]string) (*ParsedResponse, error)
+	Patch(url string, body map[string]interface{}, query map[string]interface{}, headers map[string]string) (*ParsedResponse, error)
+}
+
 // Executor handles the execution of a DAG with parallel processing capabilities
 type Executor struct {
-	db         *postgres.Postgres
-	httpClient *http.Http
+	db         *Persist
+	httpClient *Http
 }
 
 // NewExecutor creates a new DAG executor
-func NewExecutor(connStr string) (*Executor, error) {
-	db, err := postgres.NewPostgres(connStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create repository: %w", err)
-	}
-	httpClient, err := http.NewHttp(connStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create http client: %w", err)
-	}
+func NewExecutor(db Persist, http Http) (*Executor, error) {
 	return &Executor{
-		db:         db,
-		httpClient: httpClient,
+		db:         &db,
+		httpClient: &http,
 	}, nil
 }
 
