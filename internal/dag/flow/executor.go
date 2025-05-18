@@ -20,6 +20,11 @@ type Executor struct {
 	httpClient *http.Http
 }
 
+type ErrEvt struct {
+	StepID string
+	Err    error
+}
+
 type Execution struct {
 	dag      *domain.DAG
 	stepsMap map[string]*domain.Step
@@ -29,7 +34,7 @@ type Execution struct {
 	waitList          *sync.Map
 	executor          *Executor
 	wg                *sync.WaitGroup
-	errorChannel      chan error
+	errorChannel      chan ErrEvt
 	completionChannel chan string
 }
 
@@ -70,7 +75,7 @@ func (e *Executor) Execute(dag *domain.DAG, input map[string]interface{}) (inter
 		executor:          e,
 		waitList:          &sync.Map{},
 		wg:                &sync.WaitGroup{},
-		errorChannel:      make(chan error, 1),
+		errorChannel:      make(chan ErrEvt, 1),
 		completionChannel: make(chan string, 100),
 	}
 
@@ -88,7 +93,7 @@ func (e *Executor) Execute(dag *domain.DAG, input map[string]interface{}) (inter
 	// Check for any errors
 	select {
 	case err := <-execution.errorChannel:
-		return nil, err
+		return nil, fmt.Errorf("step %s failed: %w", err.StepID, err.Err)
 	default:
 		// No errors occurred
 	}
@@ -160,7 +165,10 @@ func (e *Execution) executeStepAsync(step *domain.Step) {
 	fmt.Println("Step result:", step.ID, result)
 
 	if err != nil {
-		e.errorChannel <- fmt.Errorf("failed to execute step %s: %w", step.ID, err)
+		e.errorChannel <- ErrEvt{
+			StepID: step.ID,
+			Err:    err,
+		}
 		return
 	}
 
