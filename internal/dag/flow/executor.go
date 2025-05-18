@@ -10,6 +10,8 @@ import (
 	http "github.com/lynnphayu/swift/dagflow/internal/dag/repositories/http"
 	postgres "github.com/lynnphayu/swift/dagflow/internal/dag/repositories/postgres"
 	"github.com/xeipuuv/gojsonschema"
+
+	utils "github.com/lynnphayu/swift/dagflow/pkg/utils"
 )
 
 // Executor handles the execution of a DAG with parallel processing capabilities
@@ -151,7 +153,7 @@ func (e *Execution) executeStepAsync(step *domain.Step) {
 	// Store the result
 	(*e.context.Results)[step.ID] = result
 	if step.Output != "" {
-		e.output = resolveString[interface{}](step.Output, e.context)
+		e.output = resolveV2[interface{}](step.Output, e.context)
 	}
 
 	for _, dep := range step.Then {
@@ -182,31 +184,31 @@ func (e *Execution) executeStep(step *domain.Step) (interface{}, error) {
 
 func eveluateCondition(left interface{}, right interface{}, operator domain.Operator, ctx *domain.Context) bool {
 	if v, ok := left.(string); ok {
-		resolvedLeft := resolveString[interface{}](v, ctx)
+		resolvedLeft := resolveV2[interface{}](v, ctx)
 		left = resolvedLeft
 	} else if v, ok := left.(domain.Condition); ok {
 		left = eveluateCondition(v.Left, v.Right, v.Operator, ctx)
 	}
 
 	if v, ok := right.(string); ok {
-		resolvedRight := resolveString[interface{}](v, ctx)
+		resolvedRight := resolveV2[interface{}](v, ctx)
 		right = resolvedRight
 	} else if v, ok := right.(domain.Condition); ok {
 		right = eveluateCondition(v.Left, v.Right, v.Operator, ctx)
 	}
 	// Convert left and right to the same type for comparison
 	switch {
-	case isNumeric(left) || isNumeric(right):
+	case utils.IsNumeric(left) || utils.IsNumeric(right):
 		// Convert both to float64 for numeric comparisons
-		leftNum := toFloat64(left)
-		rightNum := toFloat64(right)
+		leftNum := utils.ToFloat64(left)
+		rightNum := utils.ToFloat64(right)
 		left = leftNum
 		right = rightNum
-	case isString(left) || isString(right):
+	case utils.IsString(left) || utils.IsString(right):
 		// Convert both to strings for string comparisons
 		left = fmt.Sprintf("%v", left)
 		right = fmt.Sprintf("%v", right)
-	case isBool(left) || isBool(right):
+	case utils.IsBool(left) || utils.IsBool(right):
 		// Convert both to bools for boolean comparisons
 		leftBool, leftOk := left.(bool)
 		rightBool, rightOk := right.(bool)
@@ -270,8 +272,8 @@ func (e *Execution) executeInsert(step *domain.Step) (interface{}, error) {
 func (e *Execution) executeQuery(step *domain.Step) (interface{}, error) {
 	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(step.Params.Select, ", "), step.Params.Table)
 	if len(step.Params.Where) > 0 {
-		resolvedQuery := resolveValues[map[string]interface{}, map[string]interface{}](step.Params.Where, e.context)
-		whereClause, args := postgres.BuildWhereClause(resolvedQuery)
+		resolvedQuery := resolveValues(step.Params.Where, e.context)
+		whereClause, args := postgres.BuildWhereClause(resolvedQuery.(map[string]interface{}))
 		query += " WHERE " + whereClause
 		return e.executor.db.Query(query, args...)
 	}
@@ -282,9 +284,9 @@ func (e *Execution) executeHTTP(step *domain.Step) (interface{}, error) {
 	result, err := e.executor.httpClient.Execute(
 		step.Params.Method,
 		step.Params.URL,
-		resolveValues[map[string]interface{}, map[string]interface{}](step.Params.Query, e.context),
-		resolveValues[map[string]interface{}, map[string]interface{}](step.Params.Body, e.context),
-		resolveValues[map[string]string, map[string]string](step.Params.Headers, e.context),
+		resolveValues(step.Params.Query, e.context).(map[string]interface{}),
+		resolveValues(step.Params.Body, e.context).(map[string]interface{}),
+		resolveValues(step.Params.Headers, e.context).(map[string]string),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute HTTP request: %w", err)

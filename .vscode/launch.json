@@ -9,7 +9,7 @@
       "type": "go",
       "request": "launch",
       "mode": "auto",
-      "program": "${workspaceFolder}/go-backend",
+      "program": "./cmd/runner",
       "env": {
         "DATABASE_URL": "postgresql://localhost/DAG"
       }

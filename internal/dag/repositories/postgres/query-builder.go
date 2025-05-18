@@ -20,25 +20,25 @@ func BuildWhereClause(conditions map[string]interface{}) (string, []interface{})
 		case map[string]interface{}:
 			for op, val := range v {
 				switch op {
-				case "$eq":
+				case "eq":
 					clauses = append(clauses, fmt.Sprintf("%s = $%d", field, i+1))
 					args = append(args, val)
-				case "$gt":
+				case "gt":
 					clauses = append(clauses, fmt.Sprintf("%s > $%d", field, i+1))
 					args = append(args, val)
-				case "$lt":
+				case "lt":
 					clauses = append(clauses, fmt.Sprintf("%s < $%d", field, i+1))
 					args = append(args, val)
-				case "$gte":
+				case "gte":
 					clauses = append(clauses, fmt.Sprintf("%s >= $%d", field, i+1))
 					args = append(args, val)
-				case "$lte":
+				case "lte":
 					clauses = append(clauses, fmt.Sprintf("%s <= $%d", field, i+1))
 					args = append(args, val)
-				case "$like":
+				case "like":
 					clauses = append(clauses, fmt.Sprintf("%s LIKE $%d", field, i+1))
 					args = append(args, val)
-				case "$in":
+				case "in":
 					if arr, ok := val.([]interface{}); ok {
 						placeholders := make([]string, len(arr))
 						for j := range arr {

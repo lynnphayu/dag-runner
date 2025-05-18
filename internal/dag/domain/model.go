@@ -86,51 +86,17 @@ type HTTPParams struct {
 	Query   map[string]interface{} `json:"query,omitempty"`
 }
 
-// StepParams represents the parameters for different step types
-type StepParams struct {
-	// Query params
-	Table  string                 `json:"table,omitempty"`
-	Select []string               `json:"select,omitempty"`
-	Where  map[string]interface{} `json:"where,omitempty"`
-
-	// Join params
-	On    map[string]string `json:"on,omitempty"`
-	Type  string            `json:"type,omitempty"`
-	Left  string            `json:"left,omitempty"`
-	Right string            `json:"right,omitempty"`
-
-	// Filter params
-	Filter map[string]interface{} `json:"filter,omitempty"`
-
-	// Map params
-	Function string `json:"function,omitempty"`
-
-	// Insert params
-	Map map[string]string `json:"map,omitempty"`
-
-	// Condition params
-	If   Condition `json:"if,omitempty"`
-	Else string    `json:"else,omitempty"`
-
-	// HTTP params
-	Method  string                 `json:"method,omitempty"`
-	URL     string                 `json:"url,omitempty"`
-	Headers map[string]string      `json:"headers,omitempty"`
-	Body    map[string]interface{} `json:"body,omitempty"`
-	Query   map[string]interface{} `json:"query,omitempty"`
-}
-
 type Operator string
 
 const (
-	EQ    Operator = "="
-	NE    Operator = "!="
-	GT    Operator = ">"
-	GTE   Operator = ">="
-	LT    Operator = "<"
-	LTE   Operator = "<="
+	EQ    Operator = "eq"
+	NE    Operator = "ne"
+	GT    Operator = "gt"
+	GTE   Operator = "gte"
+	LT    Operator = "lt"
+	LTE   Operator = "lte"
 	IN    Operator = "in"
-	NOTIN Operator = "not in"
+	NOTIN Operator = "notin"
 	AND   Operator = "and"
 	OR    Operator = "or"
 )

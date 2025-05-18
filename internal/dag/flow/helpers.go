@@ -2,6 +2,7 @@ package flow
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/expr-lang/expr"
 	"github.com/lynnphayu/swift/dagflow/internal/dag/domain"
+	"github.com/tidwall/gjson"
 )
 
 // scanRows scans SQL rows into a slice of maps
@@ -219,66 +221,59 @@ func executeInsert(db *sql.DB, table string, mapping map[string]string, data int
 	return id, nil
 }
 
-func resolveValues[T []map[string]T | map[string]T | string | bool | int | interface{}, R any](input T, context *domain.Context) R {
+func resolveValues(input interface{}, context *domain.Context) interface{} {
 	// Handle different types of inputs
 
-	switch v := any(input).(type) {
+	switch v := input.(type) {
 	case map[string]interface{}:
 		resolvedMap := make(map[string]interface{})
 		for key, value := range v {
 			if str, ok := value.(string); ok {
-				resolvedMap[key] = resolveString[interface{}](str, context)
+				resolvedMap[key] = resolveV2[interface{}](str, context)
 			} else if integer, ok := value.(int); ok {
 				resolvedMap[key] = integer
 			} else if boolean, ok := value.(bool); ok {
 				resolvedMap[key] = boolean
 			} else if obj, ok := value.(map[string]interface{}); ok {
-				resolvedMap[key] = resolveValues[map[string]interface{}, map[string]interface{}](obj, context)
+				resolvedMap[key] = resolveValues(obj, context)
 			} else if slice, ok := value.([]map[string]interface{}); ok {
-				resolvedMap[key] = resolveValues[[]map[string]interface{}, []map[string]interface{}](slice, context)
+				resolvedMap[key] = resolveValues(slice, context)
+			} else {
+				resolvedMap[key] = value
 			}
 		}
-		if _, ok := any(map[string]interface{}{}).(R); ok {
-			return any(resolvedMap).(R)
-		}
-	case []map[string]any:
+		return resolvedMap
+	case []map[string]interface{}:
 		resolvedSlice := make([]map[string]interface{}, len(v))
 		for i, item := range v {
-			resolvedItem := resolveValues[map[string]interface{}, map[string]interface{}](item, context)
+			resolvedItem := resolveValues(item, context)
+			resolvedSlice[i] = resolvedItem.(map[string]interface{})
+		}
+		return resolvedSlice
+	case []interface{}:
+		resolvedSlice := make([]interface{}, len(v))
+		for i, item := range v {
+			resolvedItem := resolveValues(item, context)
 			resolvedSlice[i] = resolvedItem
 		}
-		if _, ok := any(map[string]interface{}{}).(R); ok {
-			return any(resolvedSlice).(R)
-		}
+		return resolvedSlice
 	case string:
-		resolvedValue := resolveString[string](v, context)
-		if _, ok := any(resolvedValue).(string); ok {
-			return any(v).(R)
+		resolvedValue, err := resolveV1(v, context)
+		if err != nil {
+			return v
 		}
-		if _, ok := any(resolvedValue).(bool); ok {
-			b, _ := strconv.ParseBool(v)
-			return any(b).(R)
-		}
-		if _, ok := any(resolvedValue).(int); ok {
-			i, _ := strconv.Atoi(v)
-			return any(i).(R)
-		}
+		return resolvedValue
 	case bool:
-		if _, ok := any(v).(bool); ok {
-			return any(v).(R)
-		}
+		return v
 	case int:
-		if _, ok := any(v).(int); ok {
-			return any(v).(R)
-		}
+		return v
 	default:
-		return any(v).(R)
+		return v
 	}
-	var zeroValue R
-	return zeroValue
+
 }
 
-func resolveString[T []map[string]T | map[string]T | string | bool | int | interface{}](str string, context *domain.Context) T {
+func resolveV2[T []map[string]T | map[string]T | string | bool | int | interface{}](str string, context *domain.Context) T {
 	// Handle string interpolation for ${var} syntax
 	env := map[string]interface{}{
 		"input":   context.Input,
@@ -325,69 +320,76 @@ func resolveString[T []map[string]T | map[string]T | string | bool | int | inter
 	return any(str).(T)
 }
 
-func isNumeric(value interface{}) bool {
-	switch value.(type) {
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-		return true
-	default:
-		return false
-	}
-}
+// resolveV1 resolves a value from the step results and converts it to the appropriate type
+func resolveV1(value interface{}, context *domain.Context) (interface{}, error) {
+	// Handle string values that might be step references
+	fmt.Println("Value:", context.Input, context.Results, value)
+	if strVal, ok := value.(string); ok && strings.HasPrefix(strVal, "$") {
+		jsonStr := ""
+		if strings.HasPrefix(strVal, "$step.") {
+			contextValue := *context.Results
+			if contextValue == nil {
+				return nil, fmt.Errorf("step results not found")
+			}
 
-func isString(value interface{}) bool {
-	_, ok := value.(string)
-	return ok
-}
+			jsonBytes, err := json.Marshal(contextValue)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal step results: %w", err)
+			}
+			jsonStr = string(jsonBytes)
+		} else if strings.HasPrefix(strVal, "$input.") {
+			contextValue := *context.Input
+			if contextValue == nil {
+				return nil, fmt.Errorf("input context not found")
+			}
 
-func isBool(value interface{}) bool {
-	_, ok := value.(bool)
-	return ok
-}
+			jsonBytes, err := json.Marshal(contextValue)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal input context: %w", err)
+			}
+			jsonStr = string(jsonBytes)
+		}
+		// Extract the path after the prefix ($step. or $input.)
+		var pathAfterPrefix string
+		if strings.HasPrefix(strVal, "$step.") {
+			pathAfterPrefix = strings.TrimPrefix(strVal, "$step.")
+		} else {
+			pathAfterPrefix = strings.TrimPrefix(strVal, "$input.")
+		}
+		result := gjson.Get(jsonStr, pathAfterPrefix)
+		fmt.Println("GJSON Path:", pathAfterPrefix, result, jsonStr)
 
-func toFloat64(value interface{}) float64 {
-	switch v := value.(type) {
-	case int:
-	case int8:
-	case int16:
-	case int32:
-	case int64:
-	case uint:
-	case uint8:
-	case uint16:
-	case uint32:
-	case uint64:
-	case float32:
-	case float64:
-		return float64(v)
-	default:
-		return 0
+		if !result.Exists() {
+			return nil, fmt.Errorf("value not found for path '%s' in context", strVal)
+		}
+
+		// For array access, ensure the result is valid
+		if strings.Contains(pathAfterPrefix, "[") && result.Type == gjson.Null {
+			return nil, fmt.Errorf("array element not found for path '%s'", strVal)
+		}
+
+		// Handle type conversion based on the gjson value type
+		switch result.Type {
+		case gjson.String:
+			// Try to convert string to number if it looks like one
+			if num, err := strconv.ParseInt(result.String(), 10, 64); err == nil {
+				return num, nil
+			}
+			if num, err := strconv.ParseFloat(result.String(), 64); err == nil {
+				return num, nil
+			}
+			return result.String(), nil
+		case gjson.Number:
+			return result.Value(), nil
+		case gjson.True, gjson.False:
+			return result.Bool(), nil
+		case gjson.Null:
+			return nil, nil
+		default:
+			return result.Value(), nil
+		}
 	}
-	switch v := value.(type) {
-	case int:
-		return float64(v)
-	case int8:
-		return float64(v)
-	case int16:
-		return float64(v)
-	case int32:
-		return float64(v)
-	case int64:
-		return float64(v)
-	case uint:
-		return float64(v)
-	case uint8:
-		return float64(v)
-	case uint16:
-		return float64(v)
-	case uint32:
-		return float64(v)
-	case uint64:
-		return float64(v)
-	case float32:
-		return float64(v)
-	case float64:
-		return v
-	default:
-		return 0
-	}
+
+	// Return the original value if it's not a context reference
+	return value, nil
 }

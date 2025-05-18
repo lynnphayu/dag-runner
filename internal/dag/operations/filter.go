@@ -45,15 +45,15 @@ func matchConditions(item map[string]interface{}, conditions map[string]interfac
 // evaluateOperator evaluates a comparison operator
 func evaluateOperator(left interface{}, operator string, right interface{}) bool {
 	switch operator {
-	case "$gt":
+	case "gt":
 		return compareValues(left, right) > 0
-	case "$gte":
+	case "gte":
 		return compareValues(left, right) >= 0
-	case "$lt":
+	case "lt":
 		return compareValues(left, right) < 0
-	case "$lte":
+	case "lte":
 		return compareValues(left, right) <= 0
-	case "$ne":
+	case "ne":
 		return !reflect.DeepEqual(left, right)
 	default:
 		return false
