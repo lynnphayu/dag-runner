@@ -9,44 +9,9 @@ import (
 	"strings"
 
 	"github.com/expr-lang/expr"
-	"github.com/lynnphayu/swift/dagflow/internal/dag/domain"
+	"github.com/lynnphayu/dag-runner/internal/dag/domain"
 	"github.com/tidwall/gjson"
 )
-
-// scanRows scans SQL rows into a slice of maps
-func scanRows(rows *sql.Rows) ([]map[string]interface{}, error) {
-	columns, err := rows.Columns()
-	if err != nil {
-		return nil, err
-	}
-
-	values := make([]interface{}, len(columns))
-	scans := make([]interface{}, len(columns))
-	for i := range values {
-		scans[i] = &values[i]
-	}
-
-	result := make([]map[string]interface{}, 0)
-	for rows.Next() {
-		if err := rows.Scan(scans...); err != nil {
-			return nil, err
-		}
-
-		row := make(map[string]interface{})
-		for i, value := range values {
-			switch v := value.(type) {
-			case []byte:
-				row[columns[i]] = string(v)
-			default:
-				row[columns[i]] = v
-			}
-		}
-
-		result = append(result, row)
-	}
-
-	return result, nil
-}
 
 func mergeMaps(maps ...map[string]interface{}) map[string]interface{} {
 	result := make(map[string]interface{})

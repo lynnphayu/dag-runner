@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/lynnphayu/swift/dagflow/internal/dag/domain"
-	http "github.com/lynnphayu/swift/dagflow/internal/dag/repositories/http"
-	postgres "github.com/lynnphayu/swift/dagflow/internal/dag/repositories/postgres"
+	"github.com/lynnphayu/dag-runner/internal/dag/domain"
+	http "github.com/lynnphayu/dag-runner/internal/dag/repositories/http"
+	postgres "github.com/lynnphayu/dag-runner/internal/dag/repositories/postgres"
 	"github.com/xeipuuv/gojsonschema"
 )
 

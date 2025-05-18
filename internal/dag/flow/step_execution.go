@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lynnphayu/swift/dagflow/internal/dag/domain"
-	postgres "github.com/lynnphayu/swift/dagflow/internal/dag/repositories/postgres"
-	utils "github.com/lynnphayu/swift/dagflow/pkg/utils"
+	"github.com/lynnphayu/dag-runner/internal/dag/domain"
+	postgres "github.com/lynnphayu/dag-runner/internal/dag/repositories/postgres"
+	utils "github.com/lynnphayu/dag-runner/pkg/utils"
 )
 
 // initExecution executes a single step asynchronously and triggers dependent steps

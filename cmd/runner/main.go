@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/lynnphayu/swift/dagflow/internal/dag"
+	"github.com/lynnphayu/dag-runner/internal/dag"
 )
 
 func main() {

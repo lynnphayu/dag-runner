@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/lynnphayu/swift/dagflow/internal/dag/domain"
-	"github.com/lynnphayu/swift/dagflow/internal/dag/flow"
+	"github.com/lynnphayu/dag-runner/internal/dag/domain"
+	"github.com/lynnphayu/dag-runner/internal/dag/flow"
 )
 
 type Server struct {

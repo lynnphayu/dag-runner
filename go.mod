@@ -1,4 +1,4 @@
-module github.com/lynnphayu/swift/dagflow
+module github.com/lynnphayu/dag-runner
 
 go 1.23.5
 
