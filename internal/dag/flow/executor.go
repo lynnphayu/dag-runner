@@ -17,24 +17,6 @@ type Executor struct {
 	httpClient *http.Http
 }
 
-type ErrEvt struct {
-	StepID string
-	Err    error
-}
-
-type Execution struct {
-	dag      *domain.DAG
-	stepsMap map[string]*domain.Step
-	context  *domain.Context
-	output   interface{}
-
-	waitList          *sync.Map
-	executor          *Executor
-	wg                *sync.WaitGroup
-	errorChannel      chan ErrEvt
-	completionChannel chan string
-}
-
 // NewExecutor creates a new DAG executor
 func NewExecutor(connStr string) (*Executor, error) {
 	db, err := postgres.NewPostgres(connStr)
@@ -65,7 +47,7 @@ func (e *Executor) Execute(dag *domain.DAG, input map[string]interface{}) (inter
 	execution := &Execution{
 		dag:      dag,
 		stepsMap: stepsMap,
-		context: &domain.Context{
+		context: &Context{
 			Results: &map[string]interface{}{},
 			Input:   &input,
 		},

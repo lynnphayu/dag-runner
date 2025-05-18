@@ -246,7 +246,7 @@ func executeInsert(db *sql.DB, table string, mapping map[string]string, data int
 	return id, nil
 }
 
-func resolveValues(input interface{}, context *domain.Context) interface{} {
+func resolveValues(input interface{}, context *Context) interface{} {
 	// Handle different types of inputs
 
 	switch v := input.(type) {
@@ -298,7 +298,7 @@ func resolveValues(input interface{}, context *domain.Context) interface{} {
 
 }
 
-func resolveV2[T []map[string]T | map[string]T | string | bool | int | interface{}](str string, context *domain.Context) T {
+func resolveV2[T []map[string]T | map[string]T | string | bool | int | interface{}](str string, context *Context) T {
 	// Handle string interpolation for ${var} syntax
 	env := map[string]interface{}{
 		"input":   context.Input,
@@ -346,7 +346,7 @@ func resolveV2[T []map[string]T | map[string]T | string | bool | int | interface
 }
 
 // resolveV1 resolves a value from the step results and converts it to the appropriate type
-func resolveV1(value interface{}, context *domain.Context) (interface{}, error) {
+func resolveV1(value interface{}, context *Context) (interface{}, error) {
 	// Handle string values that might be step references
 	if strVal, ok := value.(string); ok && strings.HasPrefix(strVal, "$") {
 		jsonStr := ""

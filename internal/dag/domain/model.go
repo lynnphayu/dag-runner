@@ -1,10 +1,5 @@
 package domain
 
-type Context struct {
-	Input   *map[string]interface{}
-	Results *map[string]interface{}
-}
-
 // DAG represents a directed acyclic graph of processing steps
 type DAG struct {
 	ID           string `json:"id"`

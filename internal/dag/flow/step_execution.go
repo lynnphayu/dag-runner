@@ -3,11 +3,35 @@ package flow
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/lynnphayu/dag-runner/internal/dag/domain"
 	postgres "github.com/lynnphayu/dag-runner/internal/dag/repositories/postgres"
 	utils "github.com/lynnphayu/dag-runner/pkg/utils"
 )
+
+type ErrEvt struct {
+	StepID string
+	Err    error
+}
+
+type Context struct {
+	Input   *map[string]interface{}
+	Results *map[string]interface{}
+}
+
+type Execution struct {
+	dag      *domain.DAG
+	stepsMap map[string]*domain.Step
+	context  *Context
+	output   interface{}
+
+	waitList          *sync.Map
+	executor          *Executor
+	wg                *sync.WaitGroup
+	errorChannel      chan ErrEvt
+	completionChannel chan string
+}
 
 // initExecution executes a single step asynchronously and triggers dependent steps
 func (e *Execution) initExecution(step *domain.Step) {
@@ -182,7 +206,7 @@ func (e *Execution) executeFilter(step *domain.Step) (interface{}, error) {
 	return applyFilter(dataset, step.Params.Filter)
 }
 
-func eveluateCondition(left interface{}, right interface{}, operator domain.Operator, ctx *domain.Context) bool {
+func eveluateCondition(left interface{}, right interface{}, operator domain.Operator, ctx *Context) bool {
 	if v, ok := left.(string); ok {
 		resolvedLeft := resolveV2[interface{}](v, ctx)
 		left = resolvedLeft
