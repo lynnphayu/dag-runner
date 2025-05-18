@@ -78,9 +78,18 @@ type UpdateParams struct {
 }
 type DeleteParams struct{}
 
+type JoinType string
+
+const (
+	Inner JoinType = "inner"
+	Left  JoinType = "left"
+	Right JoinType = "right"
+	// Full  JoinType = "full" // still not sure this should be supported
+)
+
 type JoinParams struct {
 	On    map[string]string `json:"on"`
-	Type  string            `json:"type"`
+	Type  JoinType          `json:"type"`
 	Left  string            `json:"left"`
 	Right string            `json:"right"`
 }

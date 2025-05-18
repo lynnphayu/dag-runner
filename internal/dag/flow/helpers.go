@@ -48,8 +48,18 @@ func scanRows(rows *sql.Rows) ([]map[string]interface{}, error) {
 	return result, nil
 }
 
+func mergeMaps(maps ...map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+	for _, m := range maps {
+		for k, v := range m {
+			result[k] = v
+		}
+	}
+	return result
+}
+
 // performJoin joins two datasets based on join conditions
-func performJoin(datasets [][]map[string]interface{}, on map[string]string, joinType string) ([]map[string]interface{}, error) {
+func performJoin(datasets [][]map[string]interface{}, on map[string]string, joinType domain.JoinType) ([]map[string]interface{}, error) {
 	if len(datasets) != 2 {
 		return nil, fmt.Errorf("join requires exactly two datasets")
 	}
@@ -60,18 +70,41 @@ func performJoin(datasets [][]map[string]interface{}, on map[string]string, join
 
 	// Perform join
 	result := make([]map[string]interface{}, 0)
-	for _, leftRow := range left {
+	switch joinType {
+	case domain.Inner:
+		for _, leftRow := range left {
+			for _, rightRow := range right {
+				if matchJoinConditions(leftRow, rightRow, on) {
+					result = append(result, mergeMaps(leftRow, rightRow))
+				}
+			}
+		}
+	case domain.Left:
+		for _, leftRow := range left {
+			matched := false
+			for _, rightRow := range right {
+				if matchJoinConditions(leftRow, rightRow, on) {
+					result = append(result, mergeMaps(leftRow, rightRow))
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				result = append(result, mergeMaps(leftRow))
+			}
+		}
+	case domain.Right:
 		for _, rightRow := range right {
-			if matchJoinConditions(leftRow, rightRow, on) {
-				// Merge rows
-				merged := make(map[string]interface{})
-				for k, v := range leftRow {
-					merged[k] = v
+			matched := false
+			for _, leftRow := range left {
+				if matchJoinConditions(leftRow, rightRow, on) {
+					result = append(result, mergeMaps(leftRow, rightRow))
+					matched = true
+					break
 				}
-				for k, v := range rightRow {
-					merged[k] = v
-				}
-				result = append(result, merged)
+			}
+			if !matched {
+				result = append(result, mergeMaps(rightRow))
 			}
 		}
 	}
