@@ -64,7 +64,7 @@ type QueryParams struct {
 	Select []string `json:"select"`
 }
 type InsertParams struct {
-	Map map[string]string `json:"map"`
+	Map map[string]interface{} `json:"map"`
 }
 type UpdateParams struct {
 	Set map[string]interface{} `json:"set"`

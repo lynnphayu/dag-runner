@@ -116,7 +116,7 @@ func (e *Execution) executeCondition(step *Step) (interface{}, error) {
 }
 
 func (e *Execution) executeInsert(step *Step) (interface{}, error) {
-	data := resolveValues(step.Params.Filter, e.context).(map[string]interface{})
+	data := resolveValues(step.Params.Map, e.context).(map[string]interface{})
 	return (*e.executor.db).Create(step.Params.Table, data)
 }
 

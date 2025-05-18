@@ -9,7 +9,7 @@
       "type": "go",
       "request": "launch",
       "mode": "auto",
-      "program": "./cmd/runner",
+      "program": "./cmd/runner_web",
       "env": {
         "DATABASE_URL": "postgresql://localhost/DAG"
       }
