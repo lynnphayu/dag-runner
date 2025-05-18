@@ -1,0 +1,29 @@
+{
+  "input": {
+    "email": "lynnphayu@gmail.com"
+  },
+  "dag": {
+    "id": "Delete Example",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string"
+        }
+      },
+      "required": ["email"]
+    },
+    "outputSchema": {
+      "type": "array"
+    },
+    "steps": [
+      {
+        "id": "delete",
+        "type": "delete",
+        "table": "users",
+        "where": { "email": "$input.email" },
+        "output": []
+      }
+    ]
+  }
+}

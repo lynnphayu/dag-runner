@@ -39,7 +39,7 @@ func (e *Execution) initExecution(step *domain.Step) {
 	// Store the result
 	(*e.context.Results)[step.ID] = result
 	e.completionChannel <- step.ID
-	if step.Output != "" {
+	if step.Output != nil && step.Output != "" {
 		e.output = resolveValues(step.Output, e.context)
 	}
 
@@ -71,6 +71,8 @@ func (e *Execution) executeStep(step *domain.Step) (interface{}, error) {
 		return e.executeHTTP(step)
 	case domain.Cond:
 		return e.executeCondition(step)
+	case domain.Filter:
+		return e.executeFilter(step)
 	default:
 		return nil, fmt.Errorf("unsupported step type: %s", step.Type)
 	}
@@ -164,6 +166,20 @@ func (e *Execution) executeJoin(step *domain.Step) (interface{}, error) {
 	}
 
 	return performJoin(datasets, step.Params.On, step.Params.Type)
+}
+
+func (e *Execution) executeFilter(step *domain.Step) (interface{}, error) {
+	// Get input data
+	var dataset []map[string]interface{}
+	if len(step.DependsOn) != 1 {
+		return nil, fmt.Errorf("filter step requires exactly one dependent step")
+	}
+	if v, ok := (*e.context.Results)[step.DependsOn[0]]; ok {
+		dataset = v.([]map[string]interface{})
+	} else {
+		return nil, fmt.Errorf("filter step dependent step %s is not a slice", step.DependsOn[0])
+	}
+	return applyFilter(dataset, step.Params.Filter)
 }
 
 func eveluateCondition(left interface{}, right interface{}, operator domain.Operator, ctx *domain.Context) bool {

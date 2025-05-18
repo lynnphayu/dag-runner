@@ -130,15 +130,15 @@ func matchConditions(item map[string]interface{}, conditions map[string]interfac
 // evaluateOperator evaluates a comparison operator
 func evaluateOperator(left interface{}, operator string, right interface{}) bool {
 	switch operator {
-	case "$gt":
+	case "gt":
 		return compareValues(left, right) > 0
-	case "$gte":
+	case "gte":
 		return compareValues(left, right) >= 0
-	case "$lt":
+	case "lt":
 		return compareValues(left, right) < 0
-	case "$lte":
+	case "lte":
 		return compareValues(left, right) <= 0
-	case "$ne":
+	case "ne":
 		return !reflect.DeepEqual(left, right)
 	default:
 		return false
@@ -151,20 +151,47 @@ func compareValues(a, b interface{}) int {
 	va := reflect.ValueOf(a)
 	vb := reflect.ValueOf(b)
 
-	switch va.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return int(va.Int() - vb.Int())
-	case reflect.Float32, reflect.Float64:
-		diff := va.Float() - vb.Float()
-		if diff > 0 {
+	// Handle nil values
+	if !va.IsValid() || !vb.IsValid() {
+		return strings.Compare(fmt.Sprint(a), fmt.Sprint(b))
+	}
+
+	// Convert both values to float64 if one of them is float
+	if (va.Kind() == reflect.Float32 || va.Kind() == reflect.Float64) ||
+		(vb.Kind() == reflect.Float32 || vb.Kind() == reflect.Float64) {
+		var fa, fb float64
+		switch va.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			fa = float64(va.Int())
+		case reflect.Float32, reflect.Float64:
+			fa = va.Float()
+		default:
+			return strings.Compare(fmt.Sprint(a), fmt.Sprint(b))
+		}
+		switch vb.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			fb = float64(vb.Int())
+		case reflect.Float32, reflect.Float64:
+			fb = vb.Float()
+		default:
+			return strings.Compare(fmt.Sprint(a), fmt.Sprint(b))
+		}
+		if fa > fb {
 			return 1
-		} else if diff < 0 {
+		} else if fa < fb {
 			return -1
 		}
 		return 0
-	default:
-		return strings.Compare(fmt.Sprint(a), fmt.Sprint(b))
 	}
+
+	// Handle integer types
+	if va.Kind() >= reflect.Int && va.Kind() <= reflect.Int64 &&
+		vb.Kind() >= reflect.Int && vb.Kind() <= reflect.Int64 {
+		return int(va.Int() - vb.Int())
+	}
+
+	// Default to string comparison
+	return strings.Compare(fmt.Sprint(a), fmt.Sprint(b))
 }
 
 // executeInsert executes an insert operation
@@ -323,10 +350,9 @@ func resolveV2[T []map[string]T | map[string]T | string | bool | int | interface
 // resolveV1 resolves a value from the step results and converts it to the appropriate type
 func resolveV1(value interface{}, context *domain.Context) (interface{}, error) {
 	// Handle string values that might be step references
-	fmt.Println("Value:", context.Input, context.Results, value)
 	if strVal, ok := value.(string); ok && strings.HasPrefix(strVal, "$") {
 		jsonStr := ""
-		if strings.HasPrefix(strVal, "$step.") {
+		if strings.HasPrefix(strVal, "$results.") {
 			contextValue := *context.Results
 			if contextValue == nil {
 				return nil, fmt.Errorf("step results not found")
@@ -351,8 +377,8 @@ func resolveV1(value interface{}, context *domain.Context) (interface{}, error) 
 		}
 		// Extract the path after the prefix ($step. or $input.)
 		var pathAfterPrefix string
-		if strings.HasPrefix(strVal, "$step.") {
-			pathAfterPrefix = strings.TrimPrefix(strVal, "$step.")
+		if strings.HasPrefix(strVal, "$results.") {
+			pathAfterPrefix = strings.TrimPrefix(strVal, "$results.")
 		} else {
 			pathAfterPrefix = strings.TrimPrefix(strVal, "$input.")
 		}
@@ -392,4 +418,21 @@ func resolveV1(value interface{}, context *domain.Context) (interface{}, error) 
 
 	// Return the original value if it's not a context reference
 	return value, nil
+}
+
+// ApplyFilter filters data based on conditions
+func ApplyFilter(data interface{}, conditions map[string]interface{}) (interface{}, error) {
+	dataset, ok := data.([]map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("filter input must be array of maps")
+	}
+
+	var result []map[string]interface{}
+	for _, item := range dataset {
+		if matchConditions(item, conditions) {
+			result = append(result, item)
+		}
+	}
+
+	return result, nil
 }
