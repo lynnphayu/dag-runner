@@ -60,9 +60,9 @@ func (e *Execution) initExecution(step *Step) {
 	// Store the result
 	(*e.context.Results)[step.ID] = result
 	e.completionChannel <- step.ID
-	if step.Output != nil && step.Output != "" {
-		e.output = resolveValues(step.Output, e.context)
-	}
+	// if step.Output != nil && step.Output != "" {
+	// 	e.output = resolveValues(step.Output, e.context)
+	// }
 
 	for _, dep := range step.Then {
 		if _, ok := e.waitList.Load(dep); !ok {
@@ -94,9 +94,35 @@ func (e *Execution) executeStep(step *Step) (interface{}, error) {
 		return e.executeCondition(step)
 	case Filter:
 		return e.executeFilter(step)
+	case Output:
+		return e.executeOutput(step)
 	default:
 		return nil, fmt.Errorf("unsupported step type: %s", step.Type)
 	}
+}
+
+func (e *Execution) executeOutput(step *Step) (interface{}, error) {
+	// Find the step with the name specified in step.Source
+	var sourceStep *Step
+	for _, s := range e.stepsMap {
+		if s.Name == step.Source {
+			sourceStep = s
+			break
+		}
+	}
+
+	if sourceStep == nil {
+		return nil, fmt.Errorf("source step with name '%s' not found", step.Source)
+	}
+
+	// Get the result of the source step
+	sourceResult, ok := (*e.context.Results)[sourceStep.ID]
+	if !ok {
+		return nil, fmt.Errorf("result for source step '%s' not found", step.Source)
+	}
+	// value := resolveValues(step.Source, e.context)
+	e.output = sourceResult
+	return sourceResult, nil
 }
 
 func (e *Execution) executeCondition(step *Step) (interface{}, error) {

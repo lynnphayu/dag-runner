@@ -5,20 +5,47 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
+	"github.com/lynnphayu/dag-runner/internal/services/manager"
 	"github.com/lynnphayu/dag-runner/internal/services/runner"
 )
 
-type Handler struct {
-	runnerService *runner.RunnerService
+type RunnerHandler struct {
+	runnerService  *runner.RunnerService
+	managerService *manager.ManagerService
 }
 
-func NewHandler(runnerService *runner.RunnerService) *Handler {
-	return &Handler{
-		runnerService,
+func NewRunnerHandler(runnerService *runner.RunnerService, managerService *manager.ManagerService) *RunnerHandler {
+	return &RunnerHandler{
+		runnerService:  runnerService,
+		managerService: managerService,
 	}
 }
 
-func (h *Handler) ExecuteDAG(w http.ResponseWriter, r *http.Request) {
+func (h *RunnerHandler) ExecuteDAGByID(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := vars["id"]
+
+	dag, err := h.managerService.GetDAG(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+	var input map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.runnerService.Execute(dag, input)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+func (h *RunnerHandler) ExecuteDAG(w http.ResponseWriter, r *http.Request) {
 	var request runner.ExecuteRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -35,7 +62,7 @@ func (h *Handler) ExecuteDAG(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
-func (h *Handler) GetTableNames(w http.ResponseWriter, r *http.Request) {
+func (h *RunnerHandler) GetTableNames(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.runnerService.GetTableNames()
 	if err != nil {
@@ -49,7 +76,7 @@ func (h *Handler) GetTableNames(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) GetColumns(w http.ResponseWriter, r *http.Request) {
+func (h *RunnerHandler) GetColumns(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	tableName := vars["name"]
 
