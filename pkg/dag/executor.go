@@ -98,9 +98,23 @@ func (e *Executor) Execute(dag *DAG, input map[string]interface{}) (interface{},
 	// }
 
 	// result := resolveString[interface{}](dag.Result, execution.context)
+	// Find the output step
+	var outputStepID string
+	for _, step := range dag.Steps {
+		if step.Name == "output" {
+			outputStepID = step.ID
+			break
+		}
+	}
 
+	if outputStepID == "" {
+		return nil, fmt.Errorf("output step not found")
+	}
+	outputStep := execution.stepsMap[outputStepID]
+	fmt.Println(execution.output)
+	fmt.Println(outputStep.Schema)
 	// Validate output against schema
-	if err := validateSchema(dag.OutputSchema, execution.output); err != nil {
+	if err := validateSchema(outputStep.Schema, execution.output); err != nil {
 		return nil, fmt.Errorf("output validation failed: %w", err)
 	}
 
