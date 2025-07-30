@@ -118,7 +118,7 @@ func (e *Executor) Execute(dag *DAG, input map[string]interface{}) (interface{},
 		return nil, fmt.Errorf("output validation failed: %w", err)
 	}
 
-	return execution.output.(interface{}), nil
+	return execution.output, nil
 }
 
 func (e *Executor) mapSteps(dag *DAG) (map[string]*Step, error) {
