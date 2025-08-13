@@ -6,31 +6,38 @@ import (
 	"github.com/google/uuid"
 )
 
-type Node struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Dependencies []string `json:"dependencies,omitempty"`
-	Dependents   []string `json:"dependents,omitempty"`
+type BackReferencable[T any] interface {
+	SetBackRef(node *Node[T])
 }
 
-// NewNode creates a new node with the given ID and name
-func NewNode(name string) *Node {
+type Node[T any] struct {
+	ID           string   `json:"id"                     bson:"id"`
+	Name         string   `json:"name"                   bson:"name"`
+	Data         T        `json:"data"                   bson:"data"`
+	Dependencies []string `json:"dependencies,omitempty" bson:"dependencies,omitempty"`
+	Dependents   []string `json:"dependents,omitempty"   bson:"dependents,omitempty"`
+}
+
+func NewNode[T BackReferencable[T]](name string, data T) *Node[T] {
 	id := uuid.New().String()
-	return &Node{
+	node := &Node[T]{
 		ID:           id,
 		Name:         name,
+		Data:         data,
 		Dependencies: make([]string, 0),
 		Dependents:   make([]string, 0),
 	}
+	data.SetBackRef(node)
+	return node
 }
 
-func (n *Node) AddDependency(nodeID string) {
+func (n *Node[T]) AddDependency(nodeID string) {
 	if !n.HasDependency(nodeID) {
 		n.Dependencies = append(n.Dependencies, nodeID)
 	}
 }
 
-func (n *Node) RemoveDependency(nodeID string) {
+func (n *Node[T]) RemoveDependency(nodeID string) {
 	for i, dep := range n.Dependencies {
 		if dep == nodeID {
 			n.Dependencies = append(n.Dependencies[:i], n.Dependencies[i+1:]...)
@@ -39,7 +46,7 @@ func (n *Node) RemoveDependency(nodeID string) {
 	}
 }
 
-func (n *Node) HasDependency(nodeID string) bool {
+func (n *Node[T]) HasDependency(nodeID string) bool {
 	for _, dep := range n.Dependencies {
 		if dep == nodeID {
 			return true
@@ -48,13 +55,13 @@ func (n *Node) HasDependency(nodeID string) bool {
 	return false
 }
 
-func (n *Node) AddDependent(nodeID string) {
+func (n *Node[T]) AddDependent(nodeID string) {
 	if !n.HasDependent(nodeID) {
 		n.Dependents = append(n.Dependents, nodeID)
 	}
 }
 
-func (n *Node) RemoveDependent(nodeID string) {
+func (n *Node[T]) RemoveDependent(nodeID string) {
 	for i, dep := range n.Dependents {
 		if dep == nodeID {
 			n.Dependents = append(n.Dependents[:i], n.Dependents[i+1:]...)
@@ -63,7 +70,7 @@ func (n *Node) RemoveDependent(nodeID string) {
 	}
 }
 
-func (n *Node) HasDependent(nodeID string) bool {
+func (n *Node[T]) HasDependent(nodeID string) bool {
 	for _, dep := range n.Dependents {
 		if dep == nodeID {
 			return true
@@ -72,25 +79,27 @@ func (n *Node) HasDependent(nodeID string) bool {
 	return false
 }
 
-func (n *Node) IsLeaf() bool {
+func (n *Node[T]) IsLeaf() bool {
 	return len(n.Dependents) == 0
 }
 
-func (n *Node) IsRoot() bool {
+func (n *Node[T]) IsRoot() bool {
 	return len(n.Dependencies) == 0
 }
 
-type Graph struct {
-	Nodes map[string]*Node `json:"nodes"`
+type Graph[T any] struct {
+	ID       string             `json:"id"       bson:"id"`
+	Nodes    map[string]Node[T] `json:"nodes"    bson:"nodes"`
+	adapters map[string]Adapter
 }
 
-func NewGraph() *Graph {
-	return &Graph{
-		Nodes: make(map[string]*Node),
+func NewGraph[T any]() *Graph[T] {
+	return &Graph[T]{
+		Nodes: make(map[string]Node[T]),
 	}
 }
 
-func (g *Graph) AddNode(node *Node) error {
+func (g *Graph[T]) AddNode(node Node[T]) error {
 	if _, exists := g.Nodes[node.ID]; exists {
 		return fmt.Errorf("node with ID %s already exists", node.ID)
 	}
@@ -98,21 +107,18 @@ func (g *Graph) AddNode(node *Node) error {
 	return nil
 }
 
-// RemoveNode removes a node from the graph and all its relationships
-func (g *Graph) RemoveNode(nodeID string) error {
+func (g *Graph[T]) RemoveNode(nodeID string) error {
 	node, exists := g.Nodes[nodeID]
 	if !exists {
 		return fmt.Errorf("node with ID %s does not exist", nodeID)
 	}
 
-	// Remove this node from all its dependencies' dependents
 	for _, depID := range node.Dependencies {
 		if depNode, exists := g.Nodes[depID]; exists {
 			depNode.RemoveDependent(nodeID)
 		}
 	}
 
-	// Remove this node from all its dependents' dependencies
 	for _, depID := range node.Dependents {
 		if depNode, exists := g.Nodes[depID]; exists {
 			depNode.RemoveDependency(nodeID)
@@ -123,17 +129,15 @@ func (g *Graph) RemoveNode(nodeID string) error {
 	return nil
 }
 
-// GetNode retrieves a node by its ID
-func (g *Graph) GetNode(nodeID string) (*Node, error) {
+func (g *Graph[T]) GetNode(nodeID string) (*Node[T], error) {
 	node, exists := g.Nodes[nodeID]
 	if !exists {
 		return nil, fmt.Errorf("node with ID %s does not exist", nodeID)
 	}
-	return node, nil
+	return &node, nil
 }
 
-// AddEdge creates a dependency relationship between two nodes (from -> to)
-func (g *Graph) AddEdge(fromID, toID string) error {
+func (g *Graph[T]) AddEdge(fromID, toID string) error {
 	fromNode, exists := g.Nodes[fromID]
 	if !exists {
 		return fmt.Errorf("source node %s does not exist", fromID)
@@ -157,7 +161,7 @@ func (g *Graph) AddEdge(fromID, toID string) error {
 }
 
 // RemoveEdge removes a dependency relationship between two nodes
-func (g *Graph) RemoveEdge(fromID, toID string) error {
+func (g *Graph[T]) RemoveEdge(fromID, toID string) error {
 	fromNode, exists := g.Nodes[fromID]
 	if !exists {
 		return fmt.Errorf("source node %s does not exist", fromID)
@@ -174,11 +178,11 @@ func (g *Graph) RemoveEdge(fromID, toID string) error {
 	return nil
 }
 
-func (g *Graph) wouldCreateCycle(fromID, toID string) bool {
+func (g *Graph[T]) wouldCreateCycle(fromID, toID string) bool {
 	return g.hasPath(toID, fromID)
 }
 
-func (g *Graph) hasPath(startID, endID string) bool {
+func (g *Graph[T]) hasPath(startID, endID string) bool {
 	if startID == endID {
 		return true
 	}
@@ -187,7 +191,7 @@ func (g *Graph) hasPath(startID, endID string) bool {
 	return g.dfsPath(startID, endID, visited)
 }
 
-func (g *Graph) dfsPath(currentID, targetID string, visited map[string]bool) bool {
+func (g *Graph[T]) dfsPath(currentID, targetID string, visited map[string]bool) bool {
 	if currentID == targetID {
 		return true
 	}
@@ -210,7 +214,7 @@ func (g *Graph) dfsPath(currentID, targetID string, visited map[string]bool) boo
 	return false
 }
 
-func (g *Graph) topologicalSort() ([]string, error) {
+func (g *Graph[T]) topologicalSort() ([]string, error) {
 	// Kahn's algorithm
 	inDegree := make(map[string]int)
 	queue := make([]string, 0)
@@ -252,9 +256,9 @@ func (g *Graph) topologicalSort() ([]string, error) {
 }
 
 // ValidateDAG validates that the graph is a proper DAG
-func (g *Graph) ValidateDAG() error {
+func (g *Graph[T]) ValidateDAG() error {
 	// Check for cycles using topological sort
-	_, err := g.TopologicalSort()
+	_, err := g.topologicalSort()
 	if err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
@@ -270,7 +274,13 @@ func (g *Graph) ValidateDAG() error {
 			// Verify bidirectional relationship
 			depNode := g.Nodes[depID]
 			if !depNode.HasDependent(nodeID) {
-				return fmt.Errorf("inconsistent relationship: %s depends on %s but %s doesn't list %s as dependent", nodeID, depID, depID, nodeID)
+				return fmt.Errorf(
+					"inconsistent relationship: %s depends on %s but %s doesn't list %s as dependent",
+					nodeID,
+					depID,
+					depID,
+					nodeID,
+				)
 			}
 		}
 
@@ -283,7 +293,13 @@ func (g *Graph) ValidateDAG() error {
 			// Verify bidirectional relationship
 			depNode := g.Nodes[depID]
 			if !depNode.HasDependency(nodeID) {
-				return fmt.Errorf("inconsistent relationship: %s lists %s as dependent but %s doesn't depend on %s", nodeID, depID, depID, nodeID)
+				return fmt.Errorf(
+					"inconsistent relationship: %s lists %s as dependent but %s doesn't depend on %s",
+					nodeID,
+					depID,
+					depID,
+					nodeID,
+				)
 			}
 		}
 	}
@@ -291,20 +307,28 @@ func (g *Graph) ValidateDAG() error {
 	return nil
 }
 
+func (g *Graph[T]) GetNodesDict() map[string]*Node[T] {
+	nodesMap := make(map[string]*Node[T])
+	for _, node := range g.Nodes {
+		nodesMap[node.ID] = &node
+	}
+	return nodesMap
+}
+
 // GetRootNodes returns all nodes with no dependencies
-func (g *Graph) GetRootNodes() []*Node {
-	roots := make([]*Node, 0)
+func (g *Graph[T]) GetRootNodes() []*Node[T] {
+	roots := make([]*Node[T], 0)
 	for _, node := range g.Nodes {
 		if node.IsRoot() {
-			roots = append(roots, node)
+			roots = append(roots, &node)
 		}
 	}
 	return roots
 }
 
 // GetLeafNodes returns all nodes with no dependents
-func (g *Graph) GetLeafNodes() []*Node {
-	leaves := make([]*Node, 0)
+func (g *Graph[T]) GetLeafNodes() []Node[T] {
+	leaves := make([]Node[T], 0)
 	for _, node := range g.Nodes {
 		if node.IsLeaf() {
 			leaves = append(leaves, node)
@@ -314,11 +338,31 @@ func (g *Graph) GetLeafNodes() []*Node {
 }
 
 // Size returns the number of nodes in the graph
-func (g *Graph) Size() int {
+func (g *Graph[T]) GetSize() int {
 	return len(g.Nodes)
 }
 
 // IsEmpty returns true if the graph has no nodes
-func (g *Graph) IsEmpty() bool {
+func (g *Graph[T]) IsEmpty() bool {
 	return len(g.Nodes) == 0
+}
+
+func (g *Graph[T]) GetFanOutEdges() map[string][]string {
+	edges := make(map[string][]string)
+	for nodeID, node := range g.Nodes {
+		for _, depID := range node.Dependents {
+			edges[depID] = append(edges[depID], nodeID)
+		}
+	}
+	return edges
+}
+
+func (g *Graph[T]) GetFanInEdges() map[string][]string {
+	edges := make(map[string][]string)
+	for nodeID, node := range g.Nodes {
+		for _, depID := range node.Dependencies {
+			edges[nodeID] = append(edges[nodeID], depID)
+		}
+	}
+	return edges
 }

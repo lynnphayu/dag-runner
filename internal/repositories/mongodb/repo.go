@@ -62,7 +62,7 @@ func (r *MongoDB) Create(collection string, data map[string]interface{}) (interf
 }
 
 // Retrieve fetches documents based on query
-func (r *MongoDB) Retrieve(collection string, fields []string, filter map[string]interface{}) ([]interface{}, error) {
+func (r *MongoDB) Retrieve(collection string, fields []string, filter map[string]interface{}) ([]bson.M, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -90,7 +90,7 @@ func (r *MongoDB) Retrieve(collection string, fields []string, filter map[string
 	}
 	defer cursor.Close(ctx)
 
-	var results []interface{}
+	var results []bson.M
 	if err = cursor.All(ctx, &results); err != nil {
 		return nil, fmt.Errorf("failed to decode results: %w", err)
 	}

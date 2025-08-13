@@ -23,7 +23,11 @@ func mergeMaps(maps ...map[string]interface{}) map[string]interface{} {
 }
 
 // performJoin joins two datasets based on join conditions
-func performJoin(datasets [][]map[string]interface{}, on map[string]string, joinType JoinType) ([]map[string]interface{}, error) {
+func performJoin(
+	datasets [][]map[string]interface{},
+	on map[string]string,
+	joinType JoinType,
+) ([]map[string]interface{}, error) {
 	if len(datasets) != 2 {
 		return nil, fmt.Errorf("join requires exactly two datasets")
 	}
@@ -35,7 +39,7 @@ func performJoin(datasets [][]map[string]interface{}, on map[string]string, join
 	// Perform join
 	result := make([]map[string]interface{}, 0)
 	switch joinType {
-	case Inner:
+	case InnerJoin:
 		for _, leftRow := range left {
 			for _, rightRow := range right {
 				if matchJoinConditions(leftRow, rightRow, on) {
@@ -43,7 +47,7 @@ func performJoin(datasets [][]map[string]interface{}, on map[string]string, join
 				}
 			}
 		}
-	case Left:
+	case LeftJoin:
 		for _, leftRow := range left {
 			matched := false
 			for _, rightRow := range right {
@@ -57,7 +61,7 @@ func performJoin(datasets [][]map[string]interface{}, on map[string]string, join
 				result = append(result, mergeMaps(leftRow))
 			}
 		}
-	case Right:
+	case RightJoin:
 		for _, rightRow := range right {
 			matched := false
 			for _, leftRow := range left {
@@ -88,6 +92,21 @@ func matchJoinConditions(left, right map[string]interface{}, on map[string]strin
 	return true
 }
 
+func applyMapToItem(item interface{}, mapper map[string]interface{}) map[string]interface{} {
+	mappedItem := ResolveValues(mapper, map[string]interface{}{
+		"item": item,
+	}, &Context{}).(map[string]interface{})
+	return mappedItem
+}
+
+func applyMap(data []interface{}, mapper map[string]interface{}) (interface{}, error) {
+	result := make([]map[string]interface{}, 0)
+	for _, item := range data {
+		result = append(result, applyMapToItem(item, mapper))
+	}
+	return result, nil
+}
+
 // applyFilter filters data based on conditions
 func applyFilter(data interface{}, conditions map[string]interface{}) (interface{}, error) {
 	dataset, ok := data.([]interface{})
@@ -115,7 +134,6 @@ func matchConditions(item interface{}, conditions map[string]interface{}) bool {
 					if !evaluateOperator(itm[key], op, value) {
 						return false
 					}
-
 				}
 			default:
 				if !reflect.DeepEqual(itm[key], condition) {
@@ -125,7 +143,6 @@ func matchConditions(item interface{}, conditions map[string]interface{}) bool {
 		} else {
 			return false
 		}
-
 	}
 	return true
 }
@@ -198,7 +215,12 @@ func compareValues(a, b interface{}) int {
 }
 
 // executeInsert executes an insert operation
-func executeInsert(db *sql.DB, table string, mapping map[string]string, data interface{}) (interface{}, error) {
+func executeInsert(
+	db *sql.DB,
+	table string,
+	mapping map[string]string,
+	data interface{},
+) (interface{}, error) {
 	// Build insert query
 	columns := make([]string, 0, len(mapping))
 	placeholders := make([]string, 0, len(mapping))
@@ -251,7 +273,7 @@ func executeInsert(db *sql.DB, table string, mapping map[string]string, data int
 	return id, nil
 }
 
-func resolveValues(input interface{}, context *Context) interface{} {
+func ResolveValues(input interface{}, data map[string]interface{}, context *Context) interface{} {
 	// Handle different types of inputs
 
 	switch v := input.(type) {
@@ -259,15 +281,15 @@ func resolveValues(input interface{}, context *Context) interface{} {
 		resolvedMap := make(map[string]interface{})
 		for key, value := range v {
 			if str, ok := value.(string); ok {
-				resolvedMap[key] = resolveV2[interface{}](str, context)
+				resolvedMap[key] = ResolveV2[interface{}](str, data, context)
 			} else if integer, ok := value.(int); ok {
 				resolvedMap[key] = integer
 			} else if boolean, ok := value.(bool); ok {
 				resolvedMap[key] = boolean
 			} else if obj, ok := value.(map[string]interface{}); ok {
-				resolvedMap[key] = resolveValues(obj, context)
+				resolvedMap[key] = ResolveValues(obj, data, context)
 			} else if slice, ok := value.([]map[string]interface{}); ok {
-				resolvedMap[key] = resolveValues(slice, context)
+				resolvedMap[key] = ResolveValues(slice, data, context)
 			} else {
 				resolvedMap[key] = value
 			}
@@ -276,22 +298,19 @@ func resolveValues(input interface{}, context *Context) interface{} {
 	case []map[string]interface{}:
 		resolvedSlice := make([]map[string]interface{}, len(v))
 		for i, item := range v {
-			resolvedItem := resolveValues(item, context)
+			resolvedItem := ResolveValues(item, data, context)
 			resolvedSlice[i] = resolvedItem.(map[string]interface{})
 		}
 		return resolvedSlice
 	case []interface{}:
 		resolvedSlice := make([]interface{}, len(v))
 		for i, item := range v {
-			resolvedItem := resolveValues(item, context)
+			resolvedItem := ResolveValues(item, data, context)
 			resolvedSlice[i] = resolvedItem
 		}
 		return resolvedSlice
 	case string:
-		resolvedValue, err := resolveV1(v, context)
-		if err != nil {
-			return v
-		}
+		resolvedValue := ResolveV2[interface{}](v, data, context)
 		return resolvedValue
 	case bool:
 		return v
@@ -300,14 +319,20 @@ func resolveValues(input interface{}, context *Context) interface{} {
 	default:
 		return v
 	}
-
 }
 
-func resolveV2[T []map[string]T | map[string]T | string | bool | int | interface{}](str string, context *Context) T {
+func ResolveV2[T []map[string]T | map[string]T | string | bool | int | interface{}](
+	str string,
+	data map[string]interface{},
+	context *Context,
+) T {
 	// Handle string interpolation for ${var} syntax
 	env := map[string]interface{}{
 		"input":   context.Input,
 		"results": context.Results,
+	}
+	for k, v := range data {
+		env[k] = v
 	}
 
 	// Handle string interpolation with ${var} syntax
@@ -356,7 +381,7 @@ func resolveV1(value interface{}, context *Context) (interface{}, error) {
 	if strVal, ok := value.(string); ok && strings.HasPrefix(strVal, "$") {
 		jsonStr := ""
 		if strings.HasPrefix(strVal, "$results.") {
-			contextValue := *context.Results
+			contextValue := context.Results
 			if contextValue == nil {
 				return nil, fmt.Errorf("step results not found")
 			}
@@ -367,7 +392,7 @@ func resolveV1(value interface{}, context *Context) (interface{}, error) {
 			}
 			jsonStr = string(jsonBytes)
 		} else if strings.HasPrefix(strVal, "$input.") {
-			contextValue := *context.Input
+			contextValue := context.Input
 			if contextValue == nil {
 				return nil, fmt.Errorf("input context not found")
 			}

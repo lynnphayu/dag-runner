@@ -1,20 +1,27 @@
 package runner
 
 import (
+	"fmt"
 	"log"
 
 	httpClient "github.com/lynnphayu/dag-runner/internal/repositories/http"
+	mongodb "github.com/lynnphayu/dag-runner/internal/repositories/mongodb"
 	postgres "github.com/lynnphayu/dag-runner/internal/repositories/postgres"
 	dag "github.com/lynnphayu/dag-runner/pkg/dag"
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 type RunnerService struct {
-	executor *dag.Executor
-	db       *postgres.Postgres
+	postgresdb *postgres.Postgres
+	mongodb    *mongodb.MongoDB
+	httpClient *httpClient.Http
 }
 
-func NewRunnerService(connString string) *RunnerService {
-	persistent, err := postgres.NewPostgres(connString)
+func NewRunnerService(
+	postgresURI string,
+	mongoURI string,
+) *RunnerService {
+	postgresdb, err := postgres.NewPostgres(postgresURI)
 	if err != nil {
 		log.Fatalf("failed to create postgres: %v", err)
 	}
@@ -22,24 +29,63 @@ func NewRunnerService(connString string) *RunnerService {
 	if err != nil {
 		log.Fatalf("failed to create http: %v", err)
 	}
-	executor, err := dag.NewExecutor(persistent, httpClient)
+	mongodb, err := mongodb.NewMongoDB(mongoURI, "dag_manager")
 	if err != nil {
-		log.Fatalf("failed to create executor: %v", err)
+		log.Fatalf("failed to create mongodb connection: %v", err)
 	}
 	return &RunnerService{
-		executor,
-		persistent,
+		postgresdb,
+		mongodb,
+		httpClient,
 	}
 }
 
-func (r *RunnerService) Execute(dag *dag.DAG, input map[string]interface{}) (interface{}, error) {
-	return r.executor.Execute(dag, input)
+func (r *RunnerService) GetHttpHandlerPreference(
+	graphId string,
+) (*dag.Runner, *dag.HttpAdapter, error) {
+	graphs, err := r.mongodb.Retrieve("dags", []string{"*"}, map[string]interface{}{"id": graphId})
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(graphs) == 0 {
+		return nil, nil, fmt.Errorf("graph not found")
+	}
+
+	var graph dag.Graph[*dag.Action]
+	bsonBytes, err := bson.Marshal(graphs[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	err = bson.Unmarshal(bsonBytes, &graph)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	adapters, err := r.mongodb.Retrieve("adapters", []string{"*"}, map[string]interface{}{"graph_id": graphId, "type": "http"})
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(adapters) == 0 {
+		return nil, nil, fmt.Errorf("no HTTP adapter found for graph ID: %s", graphId)
+	}
+	var adapter dag.HttpAdapter
+	bsonBytes, err = bson.Marshal(adapters[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	err = bson.Unmarshal(bsonBytes, &adapter)
+	if err != nil {
+		return nil, nil, err
+	}
+	runner := dag.NewRunner(r.postgresdb, r.httpClient, &graph)
+
+	return runner, &adapter, nil
 }
 
 func (r *RunnerService) GetTableNames() ([]string, error) {
-	return r.db.GetTableNames()
+	return r.postgresdb.GetTableNames()
 }
 
 func (r *RunnerService) GetColumns(tableName string) (map[string]string, error) {
-	return r.db.GetColumns(tableName)
+	return r.postgresdb.GetColumns(tableName)
 }
