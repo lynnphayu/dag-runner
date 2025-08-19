@@ -90,7 +90,7 @@ func (n *Node[T]) IsRoot() bool {
 type Graph[T any] struct {
 	ID       string             `json:"id"       bson:"id"`
 	Nodes    map[string]Node[T] `json:"nodes"    bson:"nodes"`
-	adapters map[string]Adapter
+	adapters map[string]Adapter[any]
 }
 
 func NewGraph[T any]() *Graph[T] {

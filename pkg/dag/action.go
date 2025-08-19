@@ -3,6 +3,8 @@ package dag
 import (
 	"encoding/json"
 	"fmt"
+
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 type ActionInterface interface {
@@ -62,7 +64,8 @@ type Query struct {
 
 func (q *Query) Execute(execCtx *ExecutionContext, action *Action) (interface{}, error) {
 	resolvedWhere := ResolveValues(q.Where, nil, &execCtx.context).(map[string]interface{})
-	return (*execCtx.executor.db).Retrieve(q.Table, q.Select, resolvedWhere)
+	result, err := (*execCtx.executor.db).Retrieve(q.Table, q.Select, resolvedWhere)
+	return result, err
 }
 
 func (q *Query) Validate(execCtx *ExecutionContext, action *Action) error {
@@ -307,6 +310,38 @@ func (a *Action) UnmarshalJSON(b []byte) error {
 	}
 	params := planConstructor()
 	if err := json.Unmarshal(a.MetaRaw, params); err != nil {
+		return err
+	}
+	a.Meta = params
+
+	return nil
+}
+
+func (a *Action) UnmarshalBSON(b []byte) error {
+	// Use type alias to avoid infinite recursion
+	type ActionAlias Action
+
+	var temp ActionAlias
+	if err := bson.Unmarshal(b, &temp); err != nil {
+		return err
+	}
+
+	a.Type = temp.Type
+	a.Input = temp.Input
+
+	// Convert the meta field from BSON to proper struct
+	planConstructor, ok := actionRegistry[a.Type]
+	if !ok {
+		return fmt.Errorf("unknown action type: %s", a.Type)
+	}
+	params := planConstructor()
+
+	// Marshal temp.Meta to BSON then unmarshal to proper struct
+	metaBytes, err := bson.Marshal(temp.Meta)
+	if err != nil {
+		return err
+	}
+	if err := bson.Unmarshal(metaBytes, params); err != nil {
 		return err
 	}
 	a.Meta = params

@@ -42,7 +42,7 @@ func NewRunnerService(
 
 func (r *RunnerService) GetHttpHandlerPreference(
 	graphId string,
-) (*dag.Runner, *dag.HttpAdapter, error) {
+) (*dag.Runner, *dag.Adapter[dag.HttpAdapter], error) {
 	graphs, err := r.mongodb.Retrieve("dags", []string{"*"}, map[string]interface{}{"id": graphId})
 	if err != nil {
 		return nil, nil, err
@@ -61,14 +61,14 @@ func (r *RunnerService) GetHttpHandlerPreference(
 		return nil, nil, err
 	}
 
-	adapters, err := r.mongodb.Retrieve("adapters", []string{"*"}, map[string]interface{}{"graph_id": graphId, "type": "http"})
+	adapters, err := r.mongodb.Retrieve("adapters", []string{"*"}, map[string]interface{}{"graphId": graphId, "type": "http"})
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(adapters) == 0 {
 		return nil, nil, fmt.Errorf("no HTTP adapter found for graph ID: %s", graphId)
 	}
-	var adapter dag.HttpAdapter
+	var adapter dag.Adapter[dag.HttpAdapter]
 	bsonBytes, err = bson.Marshal(adapters[0])
 	if err != nil {
 		return nil, nil, err
@@ -78,7 +78,6 @@ func (r *RunnerService) GetHttpHandlerPreference(
 		return nil, nil, err
 	}
 	runner := dag.NewRunner(r.postgresdb, r.httpClient, &graph)
-
 	return runner, &adapter, nil
 }
 

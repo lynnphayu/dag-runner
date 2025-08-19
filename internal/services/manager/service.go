@@ -25,7 +25,7 @@ func NewManagerService(mongoURI string) *ManagerService {
 	}
 }
 
-func (m *ManagerService) GetAdapter(id string) (*dag.Adapter, error) {
+func (m *ManagerService) GetAdapter(id string) (*dag.Adapter[any], error) {
 	collection := "adapters"
 	filter := map[string]interface{}{
 		"id": id,
@@ -40,7 +40,7 @@ func (m *ManagerService) GetAdapter(id string) (*dag.Adapter, error) {
 		return nil, fmt.Errorf("adapter not found: %s", id)
 	}
 
-	var adapter dag.Adapter
+	var adapter dag.Adapter[any]
 	bsonBytes, err := bson.Marshal(results[0])
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal BSON: %w", err)
@@ -53,14 +53,13 @@ func (m *ManagerService) GetAdapter(id string) (*dag.Adapter, error) {
 	return &adapter, nil
 }
 
-func (m *ManagerService) SaveAdapter(adapter *dag.Adapter) error {
+func (m *ManagerService) SaveAdapter(adapter *dag.Adapter[any]) error {
 	collection := "adapters"
 	uuid, err := uuid.NewRandom()
 	if err != nil {
 		return fmt.Errorf("failed to generate UUID: %w", err)
 	}
 
-	fmt.Println("adapter", adapter)
 	marshalAdapter, err := json.Marshal(adapter)
 
 	if err != nil {
@@ -71,8 +70,6 @@ func (m *ManagerService) SaveAdapter(adapter *dag.Adapter) error {
 	json.Unmarshal(marshalAdapter, &data)
 	data["id"] = uuid.String()
 	data["user_id"] = "12345"
-
-	fmt.Println("data", data)
 
 	_, err = m.db.Create(collection, data)
 	if err != nil {
@@ -98,8 +95,7 @@ func (m *ManagerService) SaveDAG(dag *dag.Graph[*dag.Action]) error {
 	data["id"] = uuid.String()
 	data["user_id"] = "12345"
 
-	r, err := m.db.Create(collection, data)
-	fmt.Println(err, r)
+	_, err = m.db.Create(collection, data)
 	if err != nil {
 		return fmt.Errorf("failed to save DAG: %w", err)
 	}

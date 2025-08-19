@@ -411,7 +411,6 @@ func resolveV1(value interface{}, context *Context) (interface{}, error) {
 			pathAfterPrefix = strings.TrimPrefix(strVal, "$input.")
 		}
 		result := gjson.Get(jsonStr, pathAfterPrefix)
-		fmt.Println("GJSON Path:", pathAfterPrefix, result, jsonStr)
 
 		if !result.Exists() {
 			return nil, fmt.Errorf("value not found for path '%s' in context", strVal)
