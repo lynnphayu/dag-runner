@@ -36,14 +36,17 @@ func (h *RunnerHandler) RegisterFlowRoute(graphId string, router *mux.Router) {
 			log.Fatalf("failed to read body: %v", err)
 		}
 		var input map[string]interface{}
-		err = json.Unmarshal(body, &input)
-		if err != nil {
-			log.Fatalf("failed to unmarshal body: %v", err)
+		if len(body) > 0 {
+			err = json.Unmarshal(body, &input)
+			if err != nil {
+				log.Fatalf("failed to unmarshal body: %v", err)
+			}
 		}
 		resolvedInput := dag.ResolveValues(adapter.InputMap, map[string]interface{}{
 			"headers": r.Header,
 			"body":    input,
 			"query":   r.URL.Query(),
+			"path":    mux.Vars(r),
 		}, &dag.Context{}).(map[string]interface{})
 
 		w.Header().Set("Content-Type", "application/json")
