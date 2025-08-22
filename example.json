@@ -1,0 +1,89 @@
+{
+  "id": "7cbf3569-2cba-4e53-9c69-a9fa811be3b4",
+  "nodes": {
+    "n_users": {
+      "id": "n_users",
+      "name": "select_users",
+      "data": {
+        "type": "query",
+        "input": {},
+        "meta": {
+          "table": "users",
+          "select": ["id", "name", "age"],
+          "where": {}
+        }
+      },
+      "dependencies": [],
+      "dependents": ["n_join"]
+    },
+    "n_orders": {
+      "id": "n_orders",
+      "name": "select_orders",
+      "data": {
+        "type": "query",
+        "input": {},
+        "meta": {
+          "table": "orders",
+          "select": ["id", "user_id", "total"],
+          "where": {}
+        }
+      },
+      "dependencies": [],
+      "dependents": ["n_join"]
+    },
+    "n_join": {
+      "id": "n_join",
+      "name": "join_users_orders",
+      "data": {
+        "type": "join",
+        "input": {},
+        "meta": {
+          "on": { "id": "user_id" },
+          "type": "inner",
+          "left": "$results.n_users",
+          "right": "$results.n_orders"
+        }
+      },
+      "dependencies": ["n_users", "n_orders"],
+      "dependents": ["n_http_notify", "n_insert_summary"]
+    },
+    "n_http_notify": {
+      "id": "n_http_notify",
+      "name": "notify_webhook",
+      "data": {
+        "type": "http",
+        "input": {},
+        "meta": {
+          "method": "POST",
+          "url": "https://httpbin.org/post",
+          "headers": { "Content-Type": "application/json" },
+          "query": {},
+          "body": {
+            "event": "user_orders_joined",
+            "payload": "$results.n_join[0]"
+          }
+        }
+      },
+      "dependencies": ["n_join"],
+      "dependents": []
+    },
+    "n_insert_summary": {
+      "id": "n_insert_summary",
+      "name": "insert_user_summary",
+      "data": {
+        "type": "insert",
+        "input": {},
+        "meta": {
+          "table": "user_summaries",
+          "map": {
+            "user_id": "$results.n_join[0].id",
+            "name": "$results.n_join[0].name",
+            "order_total": "$results.n_join[0].total"
+          }
+        }
+      },
+      "dependencies": ["n_join"],
+      "dependents": []
+    }
+  }
+}

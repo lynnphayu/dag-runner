@@ -62,9 +62,10 @@ func (h *RunnerHandler) RegisterFlowRoute(graphId string, router *mux.Router) {
 			})
 			return
 		}
-		if resultMap[adapter.Meta.ResponseNode] != nil {
+		result := dag.ResolveV2[interface{}](adapter.Meta.Response, resultMap, &dag.Context{})
+		if result != nil {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(resultMap[adapter.Meta.ResponseNode])
+			json.NewEncoder(w).Encode(result)
 			return
 		}
 		w.WriteHeader(http.StatusOK)

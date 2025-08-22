@@ -23,9 +23,9 @@ type Adapter[T HttpAdapter | SchedularAdapter | any] struct {
 }
 
 type HttpAdapter struct {
-	Path         string     `json:"path"         bson:"path"`
-	Method       HTTPMethod `json:"method"       bson:"method"`
-	ResponseNode string     `json:"responseNode" bson:"responseNode"`
+	Path     string     `json:"path" bson:"path"`
+	Method   HTTPMethod `json:"method" bson:"method"`
+	Response string     `json:"response" bson:"response"`
 
 	BodySchema  map[string]interface{} `json:"bodySchema"  bson:"bodySchema"`
 	QuerySchema map[string]interface{} `json:"querySchema" bson:"querySchema"`
