@@ -40,7 +40,7 @@ func NewRunnerService(
 	}
 }
 
-func (r *RunnerService) GetHttpHandlerPreference(
+func (r *RunnerService) GetHTTPHandlerPreference(
 	graphId string,
 ) (*dag.Runner, *dag.Adapter[dag.HttpAdapter], error) {
 	graphs, err := r.mongodb.Retrieve("dags", []string{"*"}, map[string]interface{}{"id": graphId})

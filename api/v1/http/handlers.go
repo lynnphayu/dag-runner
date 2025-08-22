@@ -26,20 +26,24 @@ func NewRunnerHandler(runnerService *runner.RunnerService, managerService *manag
 }
 
 func (h *RunnerHandler) RegisterFlowRoute(graphId string, router *mux.Router) {
-	executor, adapter, err := h.runnerService.GetHttpHandlerPreference(graphId)
+	executor, adapter, err := h.runnerService.GetHTTPHandlerPreference(graphId)
 	if err != nil {
-		log.Fatalf("failed to get http handler preference: %v", err)
+		log.Printf("failed to get http handler preference: %v", err)
+		return
 	}
 	router.HandleFunc(adapter.Meta.Path, func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			log.Fatalf("failed to read body: %v", err)
+			http.Error(w, "failed to read body", http.StatusBadRequest)
+			return
 		}
+		defer r.Body.Close()
 		var input map[string]interface{}
 		if len(body) > 0 {
 			err = json.Unmarshal(body, &input)
 			if err != nil {
-				log.Fatalf("failed to unmarshal body: %v", err)
+				http.Error(w, "invalid JSON body", http.StatusBadRequest)
+				return
 			}
 		}
 		resolvedInput := dag.ResolveValues(adapter.InputMap, map[string]interface{}{
@@ -58,9 +62,9 @@ func (h *RunnerHandler) RegisterFlowRoute(graphId string, router *mux.Router) {
 			})
 			return
 		}
-		if resultMap[adapter.Meta.ResposeNode] != nil {
+		if resultMap[adapter.Meta.ResponseNode] != nil {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(resultMap[adapter.Meta.ResposeNode])
+			json.NewEncoder(w).Encode(resultMap[adapter.Meta.ResponseNode])
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -104,17 +108,3 @@ func (h *RunnerHandler) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/tables/{name}", h.GetColumns).Methods("GET")
 	h.RegisterFlowRoute("7cbf3569-2cba-4e53-9c69-a9fa811be3b4", router)
 }
-
-// func (h *Handler) GetOperationStatus(w http.ResponseWriter, r *http.Request) {
-// 	vars := mux.Vars(r)
-// 	operationID := vars["operationId"]
-
-// 	status, err := h.executor.GetStatus(operationID)
-// 	if err != nil {
-// 		http.Error(w, err.Error(), http.StatusInternalServerError)
-// 		return
-// 	}
-
-// 	w.Header().Set("Content-Type", "application/json")
-// 	json.NewEncoder(w).Encode(status)
-// }
