@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/google/uuid"
 	mongodb "github.com/lynnphayu/dag-runner/internal/repositories/mongodb"
@@ -53,7 +54,75 @@ func (m *ManagerService) GetAdapter(id string) (*dag.Adapter[any], error) {
 	return &adapter, nil
 }
 
+func validateHTTPAuth(meta dag.HttpAdapter) error {
+	switch meta.AuthType {
+	case dag.Auth_None:
+		return nil
+	case dag.Auth_Basic:
+		username, uok := meta.Auth["username"].(string)
+		password, pok := meta.Auth["password"].(string)
+		if !uok || !pok || strings.TrimSpace(username) == "" || strings.TrimSpace(password) == "" {
+			return fmt.Errorf("basic auth requires username and password")
+		}
+		return nil
+	case dag.Auth_Bearer:
+		// Require either jwks or jwksUrl
+		if raw := meta.Auth["jwks"]; raw != nil {
+			// accept map or string; basic presence check is enough here
+			return nil
+		}
+		if url, ok := meta.Auth["jwksUrl"].(string); ok && strings.TrimSpace(url) != "" {
+			return nil
+		}
+		return fmt.Errorf("bearer auth requires 'jwks' or 'jwksUrl'")
+	case dag.Auth_ApiKey:
+		name, nok := meta.Auth["name"].(string)
+		val, vok := meta.Auth["value"].(string)
+		key, kok := meta.Auth["key"].(string)
+		in := "header"
+		if v, ok := meta.Auth["in"].(string); ok && v != "" {
+			in = strings.ToLower(v)
+		}
+		if in != "header" && in != "query" && in != "cookie" {
+			return fmt.Errorf("apiKey auth 'in' must be header, query, or cookie")
+		}
+		if !nok || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("apiKey auth requires 'name'")
+		}
+		if (!vok || strings.TrimSpace(val) == "") && (!kok || strings.TrimSpace(key) == "") {
+			return fmt.Errorf("apiKey auth requires 'value' or 'key'")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported auth type: %s", meta.AuthType)
+	}
+}
+
+func validateHTTPAdapter(adapter *dag.Adapter[any]) error {
+	meta, ok := any(adapter.Meta).(dag.HttpAdapter)
+	if !ok {
+		return fmt.Errorf("invalid http adapter meta")
+	}
+	if strings.TrimSpace(meta.Path) == "" {
+		return fmt.Errorf("adapter path is required")
+	}
+	if strings.TrimSpace(string(meta.Method)) == "" {
+		return fmt.Errorf("adapter method is required")
+	}
+	if strings.TrimSpace(meta.Response) == "" {
+		return fmt.Errorf("adapter response selector is required")
+	}
+	return validateHTTPAuth(meta)
+}
+
 func (m *ManagerService) SaveAdapter(adapter *dag.Adapter[any]) error {
+	// Validate adapter before save
+	if adapter.Type == dag.Adapter_Http {
+		if err := validateHTTPAdapter(adapter); err != nil {
+			return err
+		}
+	}
+
 	collection := "adapters"
 	uuid, err := uuid.NewRandom()
 	if err != nil {

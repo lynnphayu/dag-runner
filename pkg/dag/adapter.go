@@ -22,10 +22,21 @@ type Adapter[T HttpAdapter | SchedularAdapter | any] struct {
 	graph    *Graph[*Action]
 }
 
+type AuthType string
+
+const (
+	Auth_None   AuthType = "none"
+	Auth_Basic  AuthType = "basic"
+	Auth_Bearer AuthType = "bearer"
+	Auth_ApiKey AuthType = "apiKey"
+)
+
 type HttpAdapter struct {
-	Path     string     `json:"path" bson:"path"`
-	Method   HTTPMethod `json:"method" bson:"method"`
-	Response string     `json:"response" bson:"response"`
+	Path     string                 `json:"path" bson:"path"`
+	Method   HTTPMethod             `json:"method" bson:"method"`
+	Response string                 `json:"response" bson:"response"`
+	AuthType AuthType               `json:"authType" bson:"authType"`
+	Auth     map[string]interface{} `json:"auth" bson:"auth"`
 
 	BodySchema  map[string]interface{} `json:"bodySchema"  bson:"bodySchema"`
 	QuerySchema map[string]interface{} `json:"querySchema" bson:"querySchema"`
