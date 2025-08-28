@@ -1,16 +1,23 @@
+# syntax=docker/dockerfile:1.6
 # Builder
-FROM golang:1.23-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /app
+
+# Leverage module cache
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+  go mod download
+
 COPY . .
 
-# Build with optimized flags for smallest binary
-RUN CGO_ENABLED=0 GOOS=linux go build \
-  -a -installsuffix cgo \
-  -ldflags="-w -s" \
-  -o dag-runner ./cmd/runner_web
+# Build with cache for compiled packages; cross-compile per target
+RUN --mount=type=cache,target=/root/.cache/go-build \
+  CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+  go build -trimpath -ldflags="-w -s" -o dag-runner ./cmd/runner_web
 
 # Runtime
 FROM gcr.io/distroless/static-debian12
