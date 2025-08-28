@@ -223,7 +223,6 @@ func (r *RunnerService) RegisterFlowRoute(graphId string, router *mux.Router) {
 					return []byte(secret), nil
 				}
 				tok, err := jwt.ParseWithClaims(tokenStr, claims, keyFunc)
-				fmt.Println("tok", tok, err)
 				if err != nil || !tok.Valid {
 					return false, "invalid token"
 				}
@@ -265,7 +264,6 @@ func (r *RunnerService) RegisterFlowRoute(graphId string, router *mux.Router) {
 			}
 			claims := jwt.MapClaims{}
 			tok, err := jwt.ParseWithClaims(tokenStr, claims, selectKey)
-			fmt.Println("tok", tok, err)
 			if err != nil || !tok.Valid {
 				return false, "invalid token"
 			}
