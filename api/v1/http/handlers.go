@@ -52,15 +52,18 @@ func (h *RunnerHandler) GetColumns(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *RunnerHandler) RegisterFlowRoute(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	graphId := vars["id"]
-	h.runnerService.RegisterFlowRoute(graphId, r.Context().Value("router").(*mux.Router))
+func (h *RunnerHandler) registerFlowRouteHandler(router *mux.Router) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		graphId := vars["id"]
+		h.runnerService.RegisterFlowRoute(graphId, router)
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 func (h *RunnerHandler) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/tables", h.GetTableNames).Methods("GET")
 	router.HandleFunc("/v1/tables/{name}", h.GetColumns).Methods("GET")
 
-	router.HandleFunc("/v1/dags/{id}/register", h.RegisterFlowRoute).Methods("GET")
+	router.HandleFunc("/v1/dags/{id}/register", h.registerFlowRouteHandler(router)).Methods("GET")
 }
