@@ -2,7 +2,6 @@ package http_endpoint
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -20,14 +19,29 @@ func NewManagerHandler(managerService *manager.ManagerService) *ManagerHandler {
 	}
 }
 
-func (h *ManagerHandler) SaveDAG(w http.ResponseWriter, r *http.Request) {
-	var dag dag.DAG
-	if err := json.NewDecoder(r.Body).Decode(&dag); err != nil {
+func (h *ManagerHandler) SaveAdapter(w http.ResponseWriter, r *http.Request) {
+	var adapter dag.Adapter[any]
+	if err := json.NewDecoder(r.Body).Decode(&adapter); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	if err := h.managerService.SaveDAG(&dag); err != nil {
+	if err := h.managerService.SaveAdapter(&adapter); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+}
+
+func (h *ManagerHandler) SaveDAG(w http.ResponseWriter, r *http.Request) {
+	var g dag.Graph[*dag.Action]
+	if err := json.NewDecoder(r.Body).Decode(&g); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.managerService.SaveDAG(&g); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -39,14 +53,14 @@ func (h *ManagerHandler) GetDAG(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id := vars["id"]
 
-	dag, err := h.managerService.GetDAG(id)
+	d, err := h.managerService.GetDAG(id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(dag)
+	json.NewEncoder(w).Encode(d)
 }
 
 func (h *ManagerHandler) ListDAGs(w http.ResponseWriter, r *http.Request) {
@@ -76,20 +90,28 @@ func (h *ManagerHandler) UpdateDAG(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id := vars["id"]
 
-	var dag dag.DAG
-	if err := json.NewDecoder(r.Body).Decode(&dag); err != nil {
-		fmt.Println(err)
+	var g dag.Graph[*dag.Action]
+	if err := json.NewDecoder(r.Body).Decode(&g); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	dag.ID = id
-	if result, err := h.managerService.UpdateDAG(&dag); err != nil {
+	g.ID = id
+	result, err := h.managerService.UpdateDAG(&g)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	} else {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(result)
 	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
 
+func (h *ManagerHandler) RegisterRoutes(router *mux.Router) {
+	router.HandleFunc("/v1/dags", h.SaveDAG).Methods("POST")
+	router.HandleFunc("/v1/dags", h.ListDAGs).Methods("GET")
+	router.HandleFunc("/v1/dags/{id}", h.GetDAG).Methods("GET")
+	router.HandleFunc("/v1/dags/{id}", h.UpdateDAG).Methods("PUT")
+	router.HandleFunc("/v1/dags/{id}", h.DeleteDAG).Methods("DELETE")
+
+	router.HandleFunc("/v1/adapters", h.SaveAdapter).Methods("POST")
 }

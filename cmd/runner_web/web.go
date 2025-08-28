@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/gorilla/mux"
-	"github.com/lynnphayu/dag-runner/api/v1/http_endpoint"
+	http_service "github.com/lynnphayu/dag-runner/api/v1/http"
 	"github.com/lynnphayu/dag-runner/internal/services/manager"
 	"github.com/lynnphayu/dag-runner/internal/services/runner"
 	"github.com/rs/cors"
@@ -15,11 +15,11 @@ import (
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "8888"
 	}
 
-	connStr := os.Getenv("DATABASE_URL")
-	if connStr == "" {
+	postgresURI := os.Getenv("DATABASE_URL")
+	if postgresURI == "" {
 		log.Fatalf("missing DATABASE_URL environment variable")
 	}
 	mongoURI := os.Getenv("MONGO_URI")
@@ -27,14 +27,15 @@ func main() {
 		log.Fatalf("missing MONGO_URI environment variable")
 	}
 
-	runnerService := runner.NewRunnerService(connStr)
+	runnerService := runner.NewRunnerService(postgresURI, mongoURI)
 	managerService := manager.NewManagerService(mongoURI)
 
 	router := mux.NewRouter()
-	runner := http_endpoint.NewRunnerHandler(runnerService, managerService)
-	manager := http_endpoint.NewManagerHandler(managerService)
+	runnerHandler := http_service.NewRunnerHandler(runnerService, managerService)
+	managerHandler := http_service.NewManagerHandler(managerService)
 
-	http_endpoint.RegisterRoutes(router, runner, manager)
+	runnerHandler.RegisterRoutes(router)
+	managerHandler.RegisterRoutes(router)
 
 	// Configure CORS
 	c := cors.New(cors.Options{

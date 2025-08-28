@@ -13,29 +13,53 @@ type ErrEvt struct {
 }
 
 type Context struct {
-	Input   *map[string]interface{}
-	Results *map[string]interface{}
+	Input   map[string]interface{}
+	Results map[string]interface{}
 }
 
-type Execution struct {
-	dag      *DAG
-	stepsMap map[string]*Step
-	context  *Context
-	output   interface{}
+type ExecutionContext struct {
+	successorsMap   map[string][]string
+	predecessorsMap map[string][]string
+	context         Context
+	output          interface{}
 
-	waitList          *sync.Map
-	executor          *Executor
-	wg                *sync.WaitGroup
+	waitList          sync.Map
+	executor          *Runner
+	wg                sync.WaitGroup
 	errorChannel      chan ErrEvt
 	completionChannel chan string
 }
 
+func NewExecutionContext(
+	input map[string]interface{},
+	executor *Runner,
+) *ExecutionContext {
+	context := Context{
+		Results: map[string]interface{}{},
+		Input:   input,
+	}
+	successorsMap := executor.successorsMap
+	predecessorsMap := executor.predecessorsMap
+	graphSize := executor.graphSize
+
+	return &ExecutionContext{
+		successorsMap:     successorsMap,
+		predecessorsMap:   predecessorsMap,
+		context:           context,
+		executor:          executor,
+		waitList:          sync.Map{},
+		wg:                sync.WaitGroup{},
+		errorChannel:      make(chan ErrEvt, graphSize),
+		completionChannel: make(chan string, graphSize),
+	}
+}
+
 // initExecution executes a single step asynchronously and triggers dependent steps
-func (e *Execution) initExecution(step *Step) {
+func (e *ExecutionContext) initExecution(step *Node[*Action]) {
 	defer e.wg.Done()
 
-	for _, dep := range step.DependsOn {
-		if _, ok := (*e.context.Results)[dep]; !ok {
+	for _, dep := range e.predecessorsMap[step.ID] {
+		if _, ok := (e.context.Results)[dep]; !ok {
 			// wait for dependent steps to complete from completion channel
 			for stepId := range e.completionChannel {
 				if dep == stepId {
@@ -45,10 +69,7 @@ func (e *Execution) initExecution(step *Step) {
 		}
 	}
 
-	fmt.Println("Executing step:", step.ID)
-	result, err := e.executeStep(step)
-	fmt.Println("Step result:", step.ID, result)
-
+	result, err := step.Data.Execute(e)
 	if err != nil {
 		e.errorChannel <- ErrEvt{
 			StepID: step.ID,
@@ -57,185 +78,28 @@ func (e *Execution) initExecution(step *Step) {
 		return
 	}
 
-	// Store the result
-	(*e.context.Results)[step.ID] = result
+	(e.context.Results)[step.ID] = result
 	e.completionChannel <- step.ID
-	// if step.Output != nil && step.Output != "" {
-	// 	e.output = resolveValues(step.Output, e.context)
-	// }
 
-	for _, dep := range step.Then {
+	for _, dep := range e.successorsMap[step.ID] {
 		if _, ok := e.waitList.Load(dep); !ok {
 			e.waitList.Store(dep, true)
 			e.wg.Add(1)
-			go e.initExecution(e.stepsMap[dep])
-		}
-
-	}
-}
-
-// executeStep executes a single step
-func (e *Execution) executeStep(step *Step) (interface{}, error) {
-	// Handle different step types
-	switch step.Type {
-	case Query:
-		return e.executeQuery(step)
-	case Insert:
-		return e.executeInsert(step)
-	case Update:
-		return e.executeUpdate(step)
-	case Delete:
-		return e.executeDelete(step)
-	case Join:
-		return e.executeJoin(step)
-	case HTTP:
-		return e.executeHTTP(step)
-	case Cond:
-		return e.executeCondition(step)
-	case Filter:
-		return e.executeFilter(step)
-	case Output:
-		return e.executeOutput(step)
-	default:
-		return nil, fmt.Errorf("unsupported step type: %s", step.Type)
-	}
-}
-
-func (e *Execution) executeOutput(step *Step) (interface{}, error) {
-	// Find the step with the name specified in step.Source
-	var sourceStep *Step
-	for _, s := range e.stepsMap {
-		if s.Name == step.Source {
-			sourceStep = s
-			break
+			go e.initExecution(e.executor.nodesDict[dep])
 		}
 	}
-
-	if sourceStep == nil {
-		return nil, fmt.Errorf("source step with name '%s' not found", step.Source)
-	}
-
-	// Get the result of the source step
-	sourceResult, ok := (*e.context.Results)[sourceStep.ID]
-	if !ok {
-		return nil, fmt.Errorf("result for source step '%s' not found", step.Source)
-	}
-	// value := resolveValues(step.Source, e.context)
-	e.output = sourceResult
-	return sourceResult, nil
-}
-
-func (e *Execution) executeCondition(step *Step) (interface{}, error) {
-	left := step.If.Left
-	right := step.If.Right
-	operator := step.Params.If.Operator
-
-	result := eveluateCondition(left, right, operator, e.context)
-	elseStep := step.Else
-	if !result {
-		for _, dep := range elseStep {
-			e.wg.Add(1)
-			go e.initExecution(e.stepsMap[dep])
-		}
-	}
-	return nil, nil
-}
-
-func (e *Execution) executeInsert(step *Step) (interface{}, error) {
-	data := resolveValues(step.Params.Map, e.context).(map[string]interface{})
-	return (*e.executor.db).Create(step.Params.Table, data)
-}
-
-func (e *Execution) executeQuery(step *Step) ([]interface{}, error) {
-	where := resolveValues(step.Params.Where, e.context).(map[string]interface{})
-	return (*e.executor.db).Retrieve(step.Params.Table, step.Params.Select, where)
-}
-
-func (e *Execution) executeUpdate(step *Step) (interface{}, error) {
-	data := resolveValues(step.Params.Filter, e.context).(map[string]interface{})
-	where := resolveValues(step.Params.Where, e.context).(map[string]interface{})
-	return (*e.executor.db).Update(step.Params.Table, data, where)
-}
-
-func (e *Execution) executeDelete(step *Step) (interface{}, error) {
-	where := resolveValues(step.Params.Where, e.context).(map[string]interface{})
-	return (*e.executor.db).Delete(step.Params.Table, where)
-}
-
-func (e *Execution) executeHTTP(step *Step) (interface{}, error) {
-
-	query := resolveValues(step.Params.Query, e.context).(map[string]interface{})
-	body := resolveValues(step.Params.Body, e.context).(map[string]interface{})
-	headers := resolveValues(step.Params.Headers, e.context).(map[string]string)
-	url := resolveV2[string](step.Params.URL, e.context)
-	switch step.Params.Method {
-	case GET:
-		return (*e.executor.httpClient).Get(url, query, headers)
-	case POST:
-		return (*e.executor.httpClient).Post(url, query, body, headers)
-	case PUT:
-		return (*e.executor.httpClient).Put(url, body, query, headers)
-	case DELETE:
-		return (*e.executor.httpClient).Delete(url, query, headers)
-	case PATCH:
-		return (*e.executor.httpClient).Patch(url, body, query, headers)
-	default:
-		return nil, fmt.Errorf("unsupported HTTP method: %s", step.Params.Method)
-
-	}
-}
-
-func (e *Execution) executeJoin(step *Step) (interface{}, error) {
-	// Get input data
-	var datasets [][]map[string]interface{}
-	if len(step.DependsOn) != 2 {
-		return nil, fmt.Errorf("join step requires exactly two dependent steps")
-	}
-	if step.Params.Left == "" {
-		return nil, fmt.Errorf("join step requires left parameter")
-	}
-	if step.Params.Right == "" {
-		return nil, fmt.Errorf("join step requires right parameter")
-	}
-
-	if v, ok := (*e.context.Results)[step.Params.Left]; ok {
-		datasets = append(datasets, v.([]map[string]interface{}))
-	} else {
-		return nil, fmt.Errorf("join step left dependent step %s is not a slice", step.DependsOn[0])
-	}
-	if v, ok := (*e.context.Results)[step.Params.Right]; ok {
-		datasets = append(datasets, v.([]map[string]interface{}))
-	} else {
-		return nil, fmt.Errorf("join step right dependent step %s is not a slice", step.DependsOn[1])
-	}
-
-	return performJoin(datasets, step.Params.On, step.Params.Type)
-}
-
-func (e *Execution) executeFilter(step *Step) (interface{}, error) {
-	// Get input data
-	var dataset []interface{}
-	if len(step.DependsOn) != 1 {
-		return nil, fmt.Errorf("filter step requires exactly one dependent step")
-	}
-	if v, ok := (*e.context.Results)[step.DependsOn[0]]; ok {
-		dataset = v.([]interface{})
-	} else {
-		return nil, fmt.Errorf("filter step dependent step %s is not a slice", step.DependsOn[0])
-	}
-	return applyFilter(dataset, step.Params.Filter)
 }
 
 func eveluateCondition(left interface{}, right interface{}, operator Operator, ctx *Context) bool {
 	if v, ok := left.(string); ok {
-		resolvedLeft := resolveV2[interface{}](v, ctx)
+		resolvedLeft := ResolveV2[interface{}](v, nil, ctx)
 		left = resolvedLeft
 	} else if v, ok := left.(Condition); ok {
 		left = eveluateCondition(v.Left, v.Right, v.Operator, ctx)
 	}
 
 	if v, ok := right.(string); ok {
-		resolvedRight := resolveV2[interface{}](v, ctx)
+		resolvedRight := ResolveV2[interface{}](v, nil, ctx)
 		right = resolvedRight
 	} else if v, ok := right.(Condition); ok {
 		right = eveluateCondition(v.Left, v.Right, v.Operator, ctx)
@@ -286,7 +150,6 @@ func eveluateCondition(left interface{}, right interface{}, operator Operator, c
 	default:
 		return false
 	}
-
 }
 
 func contains(slice []string, str string) bool {

@@ -2,20 +2,20 @@ package dag
 
 // DAG represents a directed acyclic graph of processing steps
 type DAG struct {
-	ID          string `json:"id" bson:"id"`
-	Name        string `json:"name" bson:"name"`
+	ID          string `json:"id"                    bson:"id"`
+	Name        string `json:"name"                  bson:"name"`
 	Description string `json:"description,omitempty" bson:"description,omitempty"`
 	InputSchema Schema `json:"inputSchema,omitempty" bson:"inputSchema,omitempty"`
 	// OutputSchema Schema `json:"outputSchema,omitempty" bson:"outputSchema,omitempty"`
-	Steps []Step `json:"steps" bson:"steps"`
+	Steps []Step `json:"steps"                 bson:"steps"`
 }
 
 // Schema represents a JSON schema for input/output validation
 type Schema struct {
-	Type       string            `json:"type" bson:"type"`
+	Type       string            `json:"type"                 bson:"type"`
 	Properties map[string]Schema `json:"properties,omitempty" bson:"properties,omitempty"`
-	Items      *Schema           `json:"items,omitempty" bson:"items,omitempty"`
-	Required   []string          `json:"required,omitempty" bson:"required,omitempty"`
+	Items      *Schema           `json:"items,omitempty"      bson:"items,omitempty"`
+	Required   []string          `json:"required,omitempty"   bson:"required,omitempty"`
 }
 
 type StepType string
@@ -35,12 +35,12 @@ const (
 
 // Step represents a single step in the DAG
 type Step struct {
-	ID   string   `json:"id" bson:"id"`
-	Name string   `json:"name" bson:"name"`
-	Type StepType `json:"type" bson:"type"`
+	ID   string   `json:"id"                  bson:"id"`
+	Name string   `json:"name"                bson:"name"`
+	Type StepType `json:"type"                bson:"type"`
 	// Input     interface{} `json:"input,omitempty"` // Can be string or []string
 	Params
-	Then      []string `json:"then,omitempty" bson:"then,omitempty"` // next steps
+	Then      []string `json:"then,omitempty"      bson:"then,omitempty"` // next steps
 	DependsOn []string `json:"dependsOn,omitempty" bson:"dependsOn,omitempty"`
 	// Output    interface{} `json:"output,omitempty" bson:"output,omitempty"`
 }
@@ -62,7 +62,7 @@ type OutputParams struct {
 }
 
 type DbOperationParams struct {
-	Table string                 `json:"table" bson:"table"`
+	Table string                 `json:"table"           bson:"table"`
 	Where map[string]interface{} `json:"where,omitempty" bson:"where,omitempty"`
 	QueryParams
 	InsertParams
@@ -91,9 +91,9 @@ const (
 )
 
 type JoinParams struct {
-	On    map[string]string `json:"on" bson:"on"`
-	Type  JoinType          `json:"type" bson:"type"`
-	Left  string            `json:"left" bson:"left"`
+	On    map[string]string `json:"on"    bson:"on"`
+	Type  JoinType          `json:"type"  bson:"type"`
+	Left  string            `json:"left"  bson:"left"`
 	Right string            `json:"right" bson:"right"`
 }
 
@@ -106,7 +106,7 @@ type MapParams struct {
 }
 
 type ConditionParams struct {
-	If   Condition `json:"if" bson:"if"`
+	If   Condition `json:"if"   bson:"if"`
 	Else []string  `json:"else" bson:"else"`
 }
 
@@ -121,11 +121,11 @@ const (
 )
 
 type HTTPParams struct {
-	Method  SupportedHTTPMethods   `json:"method" bson:"method"`
-	URL     string                 `json:"url" bson:"url"`
+	Method  SupportedHTTPMethods   `json:"method"            bson:"method"`
+	URL     string                 `json:"url"               bson:"url"`
 	Headers map[string]string      `json:"headers,omitempty" bson:"headers,omitempty"`
-	Body    map[string]interface{} `json:"body,omitempty" bson:"body,omitempty"`
-	Query   map[string]interface{} `json:"query,omitempty" bson:"query,omitempty"`
+	Body    map[string]interface{} `json:"body,omitempty"    bson:"body,omitempty"`
+	Query   map[string]interface{} `json:"query,omitempty"   bson:"query,omitempty"`
 }
 
 type Operator string
@@ -146,10 +146,11 @@ const (
 type ConditionOperand interface {
 	string | *Condition
 }
+	return applyFilter(on, f.Filter)
 
 // Condition represents a condition in the DAG
 type Condition struct {
-	Left     interface{} `json:"left" bson:"left"` // can be string or *Condition
-	Right    interface{} `json:"right" bson:"right"`
+	Left     interface{} `json:"left"     bson:"left"` // can be string or *Condition
+	Right    interface{} `json:"right"    bson:"right"`
 	Operator Operator    `json:"operator" bson:"operator"`
 }
