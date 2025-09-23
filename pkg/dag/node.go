@@ -15,7 +15,13 @@ type Node[T any] struct {
 	Name         string   `json:"name"                   bson:"name"`
 	Data         T        `json:"data"                   bson:"data"`
 	Dependencies []string `json:"dependencies,omitempty" bson:"dependencies,omitempty"`
-	Dependents   []string `json:"dependents,omitempty"   bson:"dependents,omitempty"`
+	Dependents   []string `json:"-"   bson:"-"`
+}
+
+type Graph[T any] struct {
+	ID       string              `json:"id"       bson:"id"`
+	Nodes    map[string]*Node[T] `json:"nodes"    bson:"nodes"`
+	adapters map[string]Adapter[any]
 }
 
 func NewNode[T BackReferencable[T]](name string, data T) *Node[T] {
@@ -31,54 +37,6 @@ func NewNode[T BackReferencable[T]](name string, data T) *Node[T] {
 	return node
 }
 
-func (n *Node[T]) AddDependency(nodeID string) {
-	if !n.HasDependency(nodeID) {
-		n.Dependencies = append(n.Dependencies, nodeID)
-	}
-}
-
-func (n *Node[T]) RemoveDependency(nodeID string) {
-	for i, dep := range n.Dependencies {
-		if dep == nodeID {
-			n.Dependencies = append(n.Dependencies[:i], n.Dependencies[i+1:]...)
-			break
-		}
-	}
-}
-
-func (n *Node[T]) HasDependency(nodeID string) bool {
-	for _, dep := range n.Dependencies {
-		if dep == nodeID {
-			return true
-		}
-	}
-	return false
-}
-
-func (n *Node[T]) AddDependent(nodeID string) {
-	if !n.HasDependent(nodeID) {
-		n.Dependents = append(n.Dependents, nodeID)
-	}
-}
-
-func (n *Node[T]) RemoveDependent(nodeID string) {
-	for i, dep := range n.Dependents {
-		if dep == nodeID {
-			n.Dependents = append(n.Dependents[:i], n.Dependents[i+1:]...)
-			break
-		}
-	}
-}
-
-func (n *Node[T]) HasDependent(nodeID string) bool {
-	for _, dep := range n.Dependents {
-		if dep == nodeID {
-			return true
-		}
-	}
-	return false
-}
-
 func (n *Node[T]) IsLeaf() bool {
 	return len(n.Dependents) == 0
 }
@@ -87,23 +45,27 @@ func (n *Node[T]) IsRoot() bool {
 	return len(n.Dependencies) == 0
 }
 
-type Graph[T any] struct {
-	ID       string             `json:"id"       bson:"id"`
-	Nodes    map[string]Node[T] `json:"nodes"    bson:"nodes"`
-	adapters map[string]Adapter[any]
-}
-
 func NewGraph[T any]() *Graph[T] {
 	return &Graph[T]{
-		Nodes: make(map[string]Node[T]),
+		Nodes: make(map[string]*Node[T]),
 	}
+}
+
+func (g *Graph[T]) link(from, to *Node[T]) {
+	to.Dependencies = addUnique(to.Dependencies, from.ID)
+	from.Dependents = addUnique(from.Dependents, to.ID)
+}
+
+func (g *Graph[T]) unlink(from, to *Node[T]) {
+	to.Dependencies = removeId(to.Dependencies, from.ID)
+	from.Dependents = removeId(from.Dependents, to.ID)
 }
 
 func (g *Graph[T]) AddNode(node Node[T]) error {
 	if _, exists := g.Nodes[node.ID]; exists {
 		return fmt.Errorf("node with ID %s already exists", node.ID)
 	}
-	g.Nodes[node.ID] = node
+	g.Nodes[node.ID] = &node
 	return nil
 }
 
@@ -115,13 +77,13 @@ func (g *Graph[T]) RemoveNode(nodeID string) error {
 
 	for _, depID := range node.Dependencies {
 		if depNode, exists := g.Nodes[depID]; exists {
-			depNode.RemoveDependent(nodeID)
+			removeId(depNode.Dependents, nodeID)
 		}
 	}
 
 	for _, depID := range node.Dependents {
 		if depNode, exists := g.Nodes[depID]; exists {
-			depNode.RemoveDependency(nodeID)
+			removeId(depNode.Dependencies, nodeID)
 		}
 	}
 
@@ -129,12 +91,12 @@ func (g *Graph[T]) RemoveNode(nodeID string) error {
 	return nil
 }
 
-func (g *Graph[T]) GetNode(nodeID string) (*Node[T], error) {
+func (g *Graph[T]) Node(nodeID string) (*Node[T], error) {
 	node, exists := g.Nodes[nodeID]
 	if !exists {
 		return nil, fmt.Errorf("node with ID %s does not exist", nodeID)
 	}
-	return &node, nil
+	return node, nil
 }
 
 func (g *Graph[T]) AddEdge(fromID, toID string) error {
@@ -154,8 +116,7 @@ func (g *Graph[T]) AddEdge(fromID, toID string) error {
 	}
 
 	// Add the dependency relationship
-	toNode.AddDependency(fromID)
-	fromNode.AddDependent(toID)
+	g.link(fromNode, toNode)
 
 	return nil
 }
@@ -172,8 +133,7 @@ func (g *Graph[T]) RemoveEdge(fromID, toID string) error {
 		return fmt.Errorf("target node %s does not exist", toID)
 	}
 
-	toNode.RemoveDependency(fromID)
-	fromNode.RemoveDependent(toID)
+	g.unlink(fromNode, toNode)
 
 	return nil
 }
@@ -273,7 +233,7 @@ func (g *Graph[T]) ValidateDAG() error {
 
 			// Verify bidirectional relationship
 			depNode := g.Nodes[depID]
-			if !depNode.HasDependent(nodeID) {
+			if !contains(depNode.Dependents, nodeID) {
 				return fmt.Errorf(
 					"inconsistent relationship: %s depends on %s but %s doesn't list %s as dependent",
 					nodeID,
@@ -292,7 +252,7 @@ func (g *Graph[T]) ValidateDAG() error {
 
 			// Verify bidirectional relationship
 			depNode := g.Nodes[depID]
-			if !depNode.HasDependency(nodeID) {
+			if !contains(depNode.Dependencies, nodeID) {
 				return fmt.Errorf(
 					"inconsistent relationship: %s lists %s as dependent but %s doesn't depend on %s",
 					nodeID,
@@ -307,38 +267,38 @@ func (g *Graph[T]) ValidateDAG() error {
 	return nil
 }
 
-func (g *Graph[T]) GetNodesDict() map[string]*Node[T] {
+func (g *Graph[T]) NodesDict() map[string]*Node[T] {
 	nodesMap := make(map[string]*Node[T])
 	for _, node := range g.Nodes {
-		nodesMap[node.ID] = &node
+		nodesMap[node.ID] = node
 	}
 	return nodesMap
 }
 
 // GetRootNodes returns all nodes with no dependencies
-func (g *Graph[T]) GetRootNodes() []*Node[T] {
+func (g *Graph[T]) RootNodes() []*Node[T] {
 	roots := make([]*Node[T], 0)
 	for _, node := range g.Nodes {
 		if node.IsRoot() {
-			roots = append(roots, &node)
+			roots = append(roots, node)
 		}
 	}
 	return roots
 }
 
 // GetLeafNodes returns all nodes with no dependents
-func (g *Graph[T]) GetLeafNodes() []Node[T] {
+func (g *Graph[T]) LeafNodes() []Node[T] {
 	leaves := make([]Node[T], 0)
 	for _, node := range g.Nodes {
 		if node.IsLeaf() {
-			leaves = append(leaves, node)
+			leaves = append(leaves, *node)
 		}
 	}
 	return leaves
 }
 
 // Size returns the number of nodes in the graph
-func (g *Graph[T]) GetSize() int {
+func (g *Graph[T]) Size() int {
 	return len(g.Nodes)
 }
 
@@ -347,7 +307,7 @@ func (g *Graph[T]) IsEmpty() bool {
 	return len(g.Nodes) == 0
 }
 
-func (g *Graph[T]) GetFanOutEdges() map[string][]string {
+func (g *Graph[T]) FanOutEdges() map[string][]string {
 	edges := make(map[string][]string)
 	for nodeID, node := range g.Nodes {
 		for _, depID := range node.Dependents {
@@ -357,7 +317,7 @@ func (g *Graph[T]) GetFanOutEdges() map[string][]string {
 	return edges
 }
 
-func (g *Graph[T]) GetFanInEdges() map[string][]string {
+func (g *Graph[T]) FanInEdges() map[string][]string {
 	edges := make(map[string][]string)
 	for nodeID, node := range g.Nodes {
 		for _, depID := range node.Dependencies {
@@ -365,4 +325,31 @@ func (g *Graph[T]) GetFanInEdges() map[string][]string {
 		}
 	}
 	return edges
+}
+
+func addUnique(slice []string, id string) []string {
+	for _, s := range slice {
+		if s == id {
+			return slice
+		}
+	}
+	return append(slice, id)
+}
+
+func removeId(slice []string, id string) []string {
+	for i, s := range slice {
+		if s == id {
+			return append(slice[:i], slice[i+1:]...)
+		}
+	}
+	return slice
+}
+
+func contains(slice []string, str string) bool {
+	for _, s := range slice {
+		if s == str {
+			return true
+		}
+	}
+	return false
 }

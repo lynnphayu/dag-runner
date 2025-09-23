@@ -2,6 +2,7 @@ package http_endpoint
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -37,6 +38,7 @@ func (h *ManagerHandler) SaveAdapter(w http.ResponseWriter, r *http.Request) {
 func (h *ManagerHandler) SaveDAG(w http.ResponseWriter, r *http.Request) {
 	var g dag.Graph[*dag.Action]
 	if err := json.NewDecoder(r.Body).Decode(&g); err != nil {
+		log.Println("Invalid request body", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}

@@ -98,6 +98,52 @@ func (r *MongoDB) Retrieve(collection string, fields []string, filter map[string
 	return results, nil
 }
 
+func (r *MongoDB) FindOne(collection string, filter map[string]interface{}, out interface{}) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := r.db.Collection(collection).FindOne(ctx, filter).Decode(out)
+	if err != nil {
+		return fmt.Errorf("failed to execute find one: %w", err)
+	}
+
+	return nil
+}
+
+// RetrieveDecoded finds documents and decodes them directly into the provided
+// output slice (out should be a pointer to a slice of structs or maps).
+func (r *MongoDB) RetrieveDecoded(collection string, fields []string, filter map[string]interface{}, out interface{}) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	projection := bson.M{}
+	if len(fields) > 0 && fields[0] != "*" {
+		for _, field := range fields {
+			projection[field] = 1
+		}
+	}
+
+	if idStr, ok := filter["_id"].(string); ok {
+		objectID, err := primitive.ObjectIDFromHex(idStr)
+		if err != nil {
+			return fmt.Errorf("invalid ObjectID format: %w", err)
+		}
+		filter["_id"] = objectID
+	}
+
+	cursor, err := r.db.Collection(collection).Find(ctx, filter, options.Find().SetProjection(projection))
+	if err != nil {
+		return fmt.Errorf("failed to execute find: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	if err := cursor.All(ctx, out); err != nil {
+		return fmt.Errorf("failed to decode results into output: %w", err)
+	}
+
+	return nil
+}
+
 // Update updates documents based on filter
 func (r *MongoDB) Update(collection string, update map[string]interface{}, filter map[string]interface{}) (interface{}, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

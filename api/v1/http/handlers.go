@@ -56,7 +56,11 @@ func (h *RunnerHandler) registerFlowRouteHandler(router *mux.Router) http.Handle
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		graphId := vars["id"]
-		h.runnerService.RegisterFlowRoute(graphId, router)
+		err := h.runnerService.RegisterFlowRoute(graphId, router)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -65,5 +69,5 @@ func (h *RunnerHandler) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/tables", h.GetTableNames).Methods("GET")
 	router.HandleFunc("/v1/tables/{name}", h.GetColumns).Methods("GET")
 
-	router.HandleFunc("/v1/dags/{id}/register", h.registerFlowRouteHandler(router)).Methods("GET")
+	router.HandleFunc("/v1/dags/{id}/register", h.registerFlowRouteHandler(router)).Methods("POST")
 }

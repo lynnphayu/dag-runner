@@ -70,15 +70,15 @@ type Runner struct {
 
 // NewExecutor creates a new DAG executor
 func NewRunner(db Persist, http Http, dag *Graph[*Action]) *Runner {
-	graphSize := dag.GetSize()
-	nodesMap := dag.GetNodesDict()
-	rootNodes := dag.GetRootNodes()
+	graphSize := dag.Size()
+	nodesMap := dag.NodesDict()
+	rootNodes := dag.RootNodes()
 
 	return &Runner{
 		graphSize:       graphSize,
 		rootNodes:       rootNodes,
-		successorsMap:   dag.GetFanOutEdges(),
-		predecessorsMap: dag.GetFanInEdges(),
+		successorsMap:   dag.FanOutEdges(),
+		predecessorsMap: dag.FanInEdges(),
 		nodesDict:       nodesMap,
 		db:              &db,
 		httpClient:      &http,

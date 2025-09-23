@@ -3,21 +3,18 @@ package dag
 import (
 	"encoding/json"
 	"fmt"
-
-	"go.mongodb.org/mongo-driver/bson"
 )
 
 type ActionInterface interface {
-	Validate(execCtx *ExecutionContext) error
-	Execute(execCtx *ExecutionContext) (interface{}, error)
+	Validate(execCtx *ExecutionContext, action *Action) error
+	Execute(execCtx *ExecutionContext, action *Action) (interface{}, error)
 }
 
 type Action struct {
-	Type    ActionType             `json:"type"  bson:"type"`
-	Input   map[string]interface{} `json:"input" bson:"input"`
-	Meta    interface{}            `bson:"meta" json:"-"`
-	MetaRaw json.RawMessage        `json:"meta" bson:"-"`
-	node    *Node[*Action]
+	Type  ActionType             `json:"type"  bson:"type"`
+	Input map[string]interface{} `json:"input" bson:"input"`
+	Meta  map[string]interface{} `bson:"meta" json:"meta"`
+	node  *Node[*Action]
 }
 
 func (a *Action) SetBackRef(node *Node[*Action]) {
@@ -261,120 +258,31 @@ func (h *HTTP) Validate(execCtx *ExecutionContext, action *Action) error {
 	return nil
 }
 
-var actionRegistry = map[ActionType]func() interface{}{
-	Type_Query: func() interface{} {
-		return &Query{}
-	},
-	Type_Insert: func() interface{} {
-		return &Insert{}
-	},
-	Type_Update: func() interface{} {
-		return &Update{}
-	},
-	Type_Delete: func() interface{} {
-		return &Delete{}
-	},
-	Type_Join: func() interface{} {
-		return &Join{}
-	},
-	Type_Filter: func() interface{} {
-		return &Filter{}
-	},
-	Type_Map: func() interface{} {
-		return &Map{}
-	},
-	Type_Cond: func() interface{} {
-		return &Condition{}
-	},
-	Type_HTTP: func() interface{} {
-		return &HTTP{}
-	},
-}
-
-func (a *Action) UnmarshalJSON(b []byte) error {
-	// Use type alias to avoid infinite recursion
-	type ActionAlias Action
-
-	var temp ActionAlias
-	if err := json.Unmarshal(b, &temp); err != nil {
-		return err
-	}
-
-	a.Type = temp.Type
-	a.Input = temp.Input
-	a.MetaRaw = temp.MetaRaw
-
-	planConstructor, ok := actionRegistry[a.Type]
-	if !ok {
-		return fmt.Errorf("unknown action type: %s", a.Type)
-	}
-	params := planConstructor()
-	if err := json.Unmarshal(a.MetaRaw, params); err != nil {
-		return err
-	}
-	a.Meta = params
-
-	return nil
-}
-
-func (a *Action) UnmarshalBSON(b []byte) error {
-	// Use type alias to avoid infinite recursion
-	type ActionAlias Action
-
-	var temp ActionAlias
-	if err := bson.Unmarshal(b, &temp); err != nil {
-		return err
-	}
-
-	a.Type = temp.Type
-	a.Input = temp.Input
-
-	// Convert the meta field from BSON to proper struct
-	planConstructor, ok := actionRegistry[a.Type]
-	if !ok {
-		return fmt.Errorf("unknown action type: %s", a.Type)
-	}
-	params := planConstructor()
-
-	// Marshal temp.Meta to BSON then unmarshal to proper struct
-	metaBytes, err := bson.Marshal(temp.Meta)
-	if err != nil {
-		return err
-	}
-	if err := bson.Unmarshal(metaBytes, params); err != nil {
-		return err
-	}
-	a.Meta = params
-
-	return nil
-}
-
-type ExecuteInterface interface {
-	Execute(c *ExecutionContext, action *Action) (interface{}, error)
+var actionRegistry = map[ActionType]func() ActionInterface{
+	Type_Query:  func() ActionInterface { return &Query{} },
+	Type_Insert: func() ActionInterface { return &Insert{} },
+	Type_Update: func() ActionInterface { return &Update{} },
+	Type_Delete: func() ActionInterface { return &Delete{} },
+	Type_Join:   func() ActionInterface { return &Join{} },
+	Type_Filter: func() ActionInterface { return &Filter{} },
+	Type_Map:    func() ActionInterface { return &Map{} },
+	Type_Cond:   func() ActionInterface { return &Condition{} },
+	Type_HTTP:   func() ActionInterface { return &HTTP{} },
 }
 
 func (a *Action) Execute(c *ExecutionContext) (interface{}, error) {
-	var internal ExecuteInterface
-	switch a.Type {
-	case Type_Query:
-		internal = a.Meta.(*Query)
-	case Type_Insert:
-		internal = a.Meta.(*Insert)
-	case Type_Update:
-		internal = a.Meta.(*Update)
-	case Type_Delete:
-		internal = a.Meta.(*Delete)
-	case Type_Join:
-		internal = a.Meta.(*Join)
-	case Type_Filter:
-		internal = a.Meta.(*Filter)
-	case Type_Map:
-		internal = a.Meta.(*Map)
-	case Type_Cond:
-		internal = a.Meta.(*Condition)
-	case Type_HTTP:
-		internal = a.Meta.(*HTTP)
-	default:
+	rawMeta, err := json.Marshal(a.Meta)
+	var internal ActionInterface
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal meta: %v", err)
+	}
+	if fn, ok := actionRegistry[a.Type]; ok {
+		internal = fn()
+		if err := json.Unmarshal(rawMeta, internal); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal meta: %v", err)
+		}
+	}
+	if internal == nil {
 		return nil, fmt.Errorf("unknown action type: %s", a.Type)
 	}
 	return internal.Execute(c, a)

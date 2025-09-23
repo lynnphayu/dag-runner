@@ -37,6 +37,16 @@ func main() {
 	runnerHandler.RegisterRoutes(router)
 	managerHandler.RegisterRoutes(router)
 
+	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	}).Methods("GET")
+
+	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Hi!"))
+	}).Methods("GET")
+
 	// Configure CORS
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"*"}, // You should restrict this in production
