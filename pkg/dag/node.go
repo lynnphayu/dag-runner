@@ -2,6 +2,7 @@ package dag
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 )
@@ -233,7 +234,7 @@ func (g *Graph[T]) ValidateDAG() error {
 
 			// Verify bidirectional relationship
 			depNode := g.Nodes[depID]
-			if !contains(depNode.Dependents, nodeID) {
+			if !slices.Contains(depNode.Dependents, nodeID) {
 				return fmt.Errorf(
 					"inconsistent relationship: %s depends on %s but %s doesn't list %s as dependent",
 					nodeID,
@@ -252,7 +253,7 @@ func (g *Graph[T]) ValidateDAG() error {
 
 			// Verify bidirectional relationship
 			depNode := g.Nodes[depID]
-			if !contains(depNode.Dependencies, nodeID) {
+			if !slices.Contains(depNode.Dependencies, nodeID) {
 				return fmt.Errorf(
 					"inconsistent relationship: %s lists %s as dependent but %s doesn't depend on %s",
 					nodeID,
@@ -343,13 +344,4 @@ func removeId(slice []string, id string) []string {
 		}
 	}
 	return slice
-}
-
-func contains(slice []string, str string) bool {
-	for _, s := range slice {
-		if s == str {
-			return true
-		}
-	}
-	return false
 }

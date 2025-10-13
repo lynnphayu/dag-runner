@@ -2,6 +2,7 @@ package dag
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 
 	utils "github.com/lynnphayu/dag-runner/pkg/utils"
@@ -140,9 +141,9 @@ func eveluateCondition(left interface{}, right interface{}, operator Operator, c
 	case LTE:
 		return left.(float64) <= right.(float64)
 	case IN:
-		return contains(right.([]string), left.(string))
+		return slices.Contains(right.([]string), left.(string))
 	case NOTIN:
-		return !contains(right.([]string), left.(string))
+		return !slices.Contains(right.([]string), left.(string))
 	case AND:
 		return left.(bool) && right.(bool)
 	case OR:
