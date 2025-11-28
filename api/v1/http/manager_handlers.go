@@ -108,6 +108,34 @@ func (h *ManagerHandler) UpdateDAG(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
+func (h *ManagerHandler) GetAdapter(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := vars["id"]
+
+	adapter, err := h.managerService.GetAdapter(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(adapter)
+}
+
+func (h *ManagerHandler) ListAdapters(w http.ResponseWriter, r *http.Request) {
+	userID := r.URL.Query().Get("user_id")
+	graphID := r.URL.Query().Get("graph_id")
+
+	adapters, err := h.managerService.ListAdapters(userID, graphID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(adapters)
+}
+
 func (h *ManagerHandler) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/dags", h.SaveDAG).Methods("POST")
 	router.HandleFunc("/v1/dags", h.ListDAGs).Methods("GET")
@@ -116,4 +144,8 @@ func (h *ManagerHandler) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/dags/{id}", h.DeleteDAG).Methods("DELETE")
 
 	router.HandleFunc("/v1/adapters", h.SaveAdapter).Methods("POST")
+	router.HandleFunc("/v1/adapters", h.ListAdapters).Methods("GET")
+	router.HandleFunc("/v1/adapters/{id}", h.GetAdapter).Methods("GET")
 }
+
+

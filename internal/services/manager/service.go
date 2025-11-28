@@ -54,6 +54,52 @@ func (m *ManagerService) GetAdapter(id string) (*dag.Adapter[any], error) {
 	return &adapter, nil
 }
 
+func (m *ManagerService) ListAdapters(userID, graphID string) ([]dag.Adapter[any], error) {
+	collection := "adapters"
+	filter := map[string]interface{}{}
+
+	// Build filter based on provided parameters
+	if userID != "" {
+		filter["user_id"] = userID
+	}
+	if graphID != "" {
+		filter["graphId"] = graphID
+	}
+
+	results, err := m.db.Retrieve(collection, []string{}, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve adapters: %w", err)
+	}
+
+	adapters := make([]dag.Adapter[any], len(results))
+	for i, result := range results {
+		bsonBytes, err := bson.Marshal(result)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal BSON: %w", err)
+		}
+
+		// Convert BSON to JSON to properly populate MetaRaw
+		var rawData map[string]interface{}
+		if err := bson.Unmarshal(bsonBytes, &rawData); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal BSON to map: %w", err)
+		}
+
+		jsonBytes, err := json.Marshal(rawData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal to JSON: %w", err)
+		}
+
+		var adapter dag.Adapter[any]
+		if err := json.Unmarshal(jsonBytes, &adapter); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal to adapter: %w", err)
+		}
+
+		adapters[i] = adapter
+	}
+
+	return adapters, nil
+}
+
 func validateHTTPAuth(meta dag.HttpAdapter) error {
 	switch meta.AuthType {
 	case dag.Auth_None:

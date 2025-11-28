@@ -48,7 +48,7 @@ func NewRunnerService(
 	}
 }
 
-func (r *RunnerService) GetHTTPHandlerPreference(
+func (r *RunnerService) GetHTTPHandlerAdapter(
 	graphId string,
 ) (*dag.Runner, *dag.Adapter[dag.HttpAdapter], error) {
 
@@ -67,7 +67,7 @@ func (r *RunnerService) GetHTTPHandlerPreference(
 }
 
 func (r *RunnerService) RegisterFlowRoute(graphId string, router *mux.Router) error {
-	executor, adapter, err := r.GetHTTPHandlerPreference(graphId)
+	executor, adapter, err := r.GetHTTPHandlerAdapter(graphId)
 	if err != nil {
 		log.Printf("failed to get http handler preference: %v", err)
 		return err

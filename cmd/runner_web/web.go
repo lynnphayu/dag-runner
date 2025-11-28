@@ -1,11 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/gorilla/mux"
+	"github.com/joho/godotenv"
 	http_service "github.com/lynnphayu/dag-runner/api/v1/http"
 	"github.com/lynnphayu/dag-runner/internal/services/manager"
 	"github.com/lynnphayu/dag-runner/internal/services/runner"
@@ -13,6 +16,13 @@ import (
 )
 
 func main() {
+	root, error := os.Getwd()
+	if error != nil {
+		panic(fmt.Sprintf("Failed to get working directory: %s", error))
+	}
+	envPath := filepath.Join(root, ".env")
+	godotenv.Load(envPath)
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8888"

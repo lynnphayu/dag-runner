@@ -8,12 +8,13 @@ import (
 type AdapterType string
 
 const (
-	Adapter_Http      AdapterType = "http"
-	Adapter_Schedular AdapterType = "schedular"
+	Adapter_Http      AdapterType = "http_adapter"
+	Adapter_Schedular AdapterType = "schedular_adapter"
 )
 
 type Adapter[T HttpAdapter | SchedularAdapter | any] struct {
 	Type     AdapterType            `json:"type"  bson:"type"`
+	Name     string                 `json:"name" bson:"name"`
 	InputMap map[string]interface{} `json:"input" bson:"input"`
 	Meta     T                      `bson:"meta" json:"-"`
 	MetaRaw  json.RawMessage        `json:"meta" bson:"-"`
@@ -53,6 +54,8 @@ func (a *Adapter[T]) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	a.Type = temp.Type
+	a.Name = temp.Name
+	a.ID = temp.ID
 	a.InputMap = temp.InputMap
 	a.GraphID = temp.GraphID
 	a.MetaRaw = temp.MetaRaw
