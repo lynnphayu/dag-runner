@@ -186,3 +186,21 @@ func (r *MongoDB) GetCollectionNames() ([]string, error) {
 
 	return collections, nil
 }
+
+// Aggregate runs an aggregation pipeline and returns the resulting documents
+func (r *MongoDB) Aggregate(collection string, pipeline interface{}) ([]bson.M, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cursor, err := r.db.Collection(collection).Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute aggregate: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		return nil, fmt.Errorf("failed to decode aggregate results: %w", err)
+	}
+	return results, nil
+}

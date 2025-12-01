@@ -20,10 +20,21 @@ type Node[T any] struct {
 }
 
 type Graph[T any] struct {
-	ID       string              `json:"id"       bson:"id"`
-	Nodes    map[string]*Node[T] `json:"nodes"    bson:"nodes"`
-	adapters map[string]Adapter[any]
+	ID         string              `json:"id"       bson:"id"`
+	Name       string              `json:"name"     bson:"name"`
+	Version    int                 `json:"version"  bson:"version"`
+	Subversion int                 `json:"subversion" bson:"subversion"`
+	Status     GraphStatus         `json:"status"   bson:"status"`
+	Nodes      map[string]*Node[T] `json:"nodes"    bson:"nodes"`
+	adapters   map[string]Adapter[any]
 }
+
+type GraphStatus string
+
+const (
+	Status_Draft     GraphStatus = "draft"
+	Status_Published GraphStatus = "published"
+)
 
 func NewNode[T BackReferencable[T]](name string, data T) *Node[T] {
 	id := uuid.New().String()
