@@ -42,10 +42,14 @@ func main() {
 
 	router := mux.NewRouter()
 	runnerHandler := http_service.NewRunnerHandler(runnerService, managerService)
-	managerHandler := http_service.NewManagerHandler(managerService)
+	managerHandler := http_service.NewManagerHandler(managerService, runnerService, router)
 
 	runnerHandler.RegisterRoutes(router)
 	managerHandler.RegisterRoutes(router)
+
+	if err := runnerService.RegisterAllPublishedFlowRoutes(router); err != nil {
+		log.Fatalf("failed to pre-register published DAG routes: %v", err)
+	}
 
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

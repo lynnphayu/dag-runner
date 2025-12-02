@@ -11,10 +11,9 @@ type ActionInterface interface {
 }
 
 type Action struct {
-	Type  ActionType             `json:"type"  bson:"type"`
-	Input map[string]interface{} `json:"input" bson:"input"`
-	Meta  map[string]interface{} `bson:"meta" json:"meta"`
-	node  *Node[*Action]
+	Type ActionType             `json:"type"  bson:"type"`
+	Meta map[string]interface{} `bson:"meta" json:"meta"`
+	node *Node[*Action]
 }
 
 func (a *Action) SetBackRef(node *Node[*Action]) {

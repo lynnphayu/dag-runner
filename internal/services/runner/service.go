@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -26,6 +27,9 @@ type RunnerService struct {
 	postgresdb *postgres.Postgres
 	mongodb    *mongodb.MongoDB
 	httpClient *httpClient.Http
+	routeMu    sync.RWMutex
+	routes     map[string]*mux.Route
+	graphIndex map[string]string
 }
 
 func NewRunnerService(
@@ -45,9 +49,11 @@ func NewRunnerService(
 		log.Fatalf("failed to create mongodb connection: %v", err)
 	}
 	return &RunnerService{
-		postgresdb,
-		mongodb,
-		httpClient,
+		postgresdb: postgresdb,
+		mongodb:    mongodb,
+		httpClient: httpClient,
+		routes:     make(map[string]*mux.Route),
+		graphIndex: make(map[string]string),
 	}
 }
 
@@ -56,33 +62,20 @@ func (r *RunnerService) GetHTTPHandlerAdapter(
 ) (*dag.Runner, *dag.Adapter[dag.HttpAdapter], error) {
 
 	// Load latest graph metadata (by version/subversion) and compose nodes from separate collection
-	graphDocs, err := r.mongodb.Retrieve(constants.GRAPH_COLLECTION, []string{}, map[string]interface{}{"id": graphId})
+	graphDocs, err := r.mongodb.Retrieve(constants.GRAPH_COLLECTION, []string{}, map[string]interface{}{
+		"id":     graphId,
+		"status": string(dag.Status_Published),
+	})
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(graphDocs) == 0 {
-		return nil, nil, fmt.Errorf("graph not found: %s", graphId)
+		return nil, nil, fmt.Errorf("published graph not found: %s", graphId)
 	}
 	best := graphDocs[0]
-	getInt := func(v interface{}) int {
-		switch t := v.(type) {
-		case int:
-			return t
-		case int32:
-			return int(t)
-		case int64:
-			return int(t)
-		case float64:
-			return int(t)
-		default:
-			return 0
-		}
-	}
-	bestV := getInt(best["version"])
-	bestSV := getInt(best["subversion"])
+	bestV, bestSV := extractVersion(best)
 	for _, doc := range graphDocs[1:] {
-		v := getInt(doc["version"])
-		sv := getInt(doc["subversion"])
+		v, sv := extractVersion(doc)
 		if v > bestV || (v == bestV && sv > bestSV) {
 			best = doc
 			bestV, bestSV = v, sv
@@ -151,9 +144,43 @@ func (r *RunnerService) GetHTTPHandlerAdapter(
 			}
 		}
 	}
+	adapterDocs, err := r.mongodb.Retrieve(constants.ADAPTER_COLLECTION, []string{}, map[string]interface{}{
+		"graphId":    graphId,
+		"version":    bestV,
+		"subversion": bestSV,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
 	var adapter dag.Adapter[dag.HttpAdapter]
-	if err := r.mongodb.FindOne(constants.ADAPTER_COLLECTION, map[string]interface{}{"graphId": graphId, "type": "http"}, &adapter); err != nil {
-		log.Printf("failed to find adapter: %v", err)
+	foundAdapter := false
+	for _, doc := range adapterDocs {
+		ab, err := bson.Marshal(doc)
+		if err != nil {
+			return nil, nil, err
+		}
+		var m map[string]interface{}
+		if err := bson.Unmarshal(ab, &m); err != nil {
+			return nil, nil, err
+		}
+		jb, err := json.Marshal(m)
+		if err != nil {
+			return nil, nil, err
+		}
+		var candidate dag.Adapter[dag.HttpAdapter]
+		if err := json.Unmarshal(jb, &candidate); err != nil {
+			continue
+		}
+		if candidate.Type != dag.Adapter_Http {
+			continue
+		}
+		adapter = candidate
+		foundAdapter = true
+		break
+	}
+	if !foundAdapter {
+		err := fmt.Errorf("http adapter not found for graph %s version %d.%d", graphId, bestV, bestSV)
+		log.Println(err.Error())
 		return nil, nil, err
 	}
 	runner := dag.NewRunner(r.postgresdb, r.httpClient, &graph)
@@ -403,7 +430,7 @@ func (r *RunnerService) RegisterFlowRoute(graphId string, router *mux.Router) er
 		}
 	}
 
-	router.HandleFunc(adapter.Meta.Path, func(w http.ResponseWriter, r *http.Request) {
+	handler := func(w http.ResponseWriter, r *http.Request) {
 		if ok, reason := isAuthorized(r); !ok {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -449,8 +476,73 @@ func (r *RunnerService) RegisterFlowRoute(graphId string, router *mux.Router) er
 		}
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]interface{}{})
-	}).Methods(string(adapter.Meta.Method))
+	}
 
+	routeKey := fmt.Sprintf("%s:%s", strings.ToUpper(string(adapter.Meta.Method)), adapter.Meta.Path)
+
+	r.routeMu.Lock()
+	defer r.routeMu.Unlock()
+
+	// If graph already has a route registered, disable the old one before registering again.
+	if existingKey, ok := r.graphIndex[graphId]; ok {
+		if existingRoute, ok := r.routes[existingKey]; ok {
+			if existingKey == routeKey {
+				existingRoute.HandlerFunc(handler).Methods(string(adapter.Meta.Method))
+				return nil
+			}
+			// Old path changed: neuter previous route so it no longer handles requests.
+			existingRoute.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				http.NotFound(w, req)
+			})
+			delete(r.routes, existingKey)
+		}
+	}
+
+	route := router.HandleFunc(adapter.Meta.Path, handler).Methods(string(adapter.Meta.Method))
+	r.routes[routeKey] = route
+	r.graphIndex[graphId] = routeKey
+
+	return nil
+}
+
+func (r *RunnerService) RegisterAllPublishedFlowRoutes(router *mux.Router) error {
+	graphDocs, err := r.mongodb.Retrieve(constants.GRAPH_COLLECTION, []string{}, map[string]interface{}{
+		"status": string(dag.Status_Published),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list published graphs: %w", err)
+	}
+	if len(graphDocs) == 0 {
+		return nil
+	}
+
+	bestByGraph := make(map[string]map[string]interface{})
+	for _, doc := range graphDocs {
+		graphID, _ := doc["id"].(string)
+		if strings.TrimSpace(graphID) == "" {
+			continue
+		}
+		if existing, ok := bestByGraph[graphID]; ok {
+			v, sv := extractVersion(doc)
+			ev, esv := extractVersion(existing)
+			if v > ev || (v == ev && sv > esv) {
+				bestByGraph[graphID] = doc
+			}
+			// continue
+		}
+		bestByGraph[graphID] = doc
+	}
+
+	log.Printf("bestByGraph: %v", bestByGraph)
+	var errs []string
+	for id := range bestByGraph {
+		if err := r.RegisterFlowRoute(id, router); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", id, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to register published flows: %s", strings.Join(errs, "; "))
+	}
 	return nil
 }
 
@@ -460,4 +552,26 @@ func (r *RunnerService) GetTableNames() ([]string, error) {
 
 func (r *RunnerService) GetColumns(tableName string) (map[string]string, error) {
 	return r.postgresdb.GetColumns(tableName)
+}
+
+func getIntValue(v interface{}) int {
+	switch t := v.(type) {
+	case int:
+		return t
+	case int32:
+		return int(t)
+	case int64:
+		return int(t)
+	case float64:
+		return int(t)
+	default:
+		return 0
+	}
+}
+
+func extractVersion(doc map[string]interface{}) (int, int) {
+	if doc == nil {
+		return 0, 0
+	}
+	return getIntValue(doc["version"]), getIntValue(doc["subversion"])
 }

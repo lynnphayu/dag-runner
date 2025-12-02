@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -48,7 +50,7 @@ func (r *Postgres) Close() error {
 
 // Query executes a query and returns the results
 func (r *Postgres) query(query string, args ...interface{}) ([]interface{}, error) {
-	// Execute query
+
 	rows, err := r.pool.Query(context.Background(), query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
@@ -76,7 +78,7 @@ func (r *Postgres) query(query string, args ...interface{}) ([]interface{}, erro
 		// Create map for current row
 		row := make(map[string]interface{}, len(columns))
 		for i, col := range columns {
-			row[col] = values[i]
+			row[col] = normalizeValue(values[i], fieldDescriptions[i].DataTypeOID)
 		}
 
 		result = append(result, row)
@@ -141,6 +143,26 @@ func (r *Postgres) Retrieve(table string, columns []string, where map[string]int
 func (r *Postgres) Delete(table string, where map[string]interface{}) (interface{}, error) {
 	query, args := BuildDeleteQuery(table, where)
 	return r.mutate(query, args...)
+}
+
+func normalizeValue(value interface{}, oid uint32) interface{} {
+	if value == nil {
+		return nil
+	}
+	switch oid {
+	case pgtype.UUIDOID:
+		switch v := value.(type) {
+		case [16]byte:
+			if u, err := uuid.FromBytes(v[:]); err == nil {
+				return u.String()
+			}
+		case []byte:
+			if u, err := uuid.FromBytes(v); err == nil {
+				return u.String()
+			}
+		}
+	}
+	return value
 }
 
 func (r *Postgres) GetTableNames() ([]string, error) {

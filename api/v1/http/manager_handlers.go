@@ -2,21 +2,27 @@ package http_endpoint
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 
 	"github.com/gorilla/mux"
 	"github.com/lynnphayu/dag-runner/internal/services/manager"
+	"github.com/lynnphayu/dag-runner/internal/services/runner"
 	"github.com/lynnphayu/dag-runner/pkg/dag"
 )
 
 type ManagerHandler struct {
 	managerService *manager.ManagerService
+	runnerService  *runner.RunnerService
+	router         *mux.Router
 }
 
-func NewManagerHandler(managerService *manager.ManagerService) *ManagerHandler {
+func NewManagerHandler(managerService *manager.ManagerService, runnerService *runner.RunnerService, router *mux.Router) *ManagerHandler {
 	return &ManagerHandler{
 		managerService: managerService,
+		runnerService:  runnerService,
+		router:         router,
 	}
 }
 
@@ -115,6 +121,12 @@ func (h *ManagerHandler) PublishDAG(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if h.runnerService != nil && h.router != nil {
+		if err := h.runnerService.RegisterFlowRoute(id, h.router); err != nil {
+			http.Error(w, fmt.Sprintf("failed to register adapters: %v", err), http.StatusInternalServerError)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"id": newID, "version": version, "status": "published"})

@@ -738,6 +738,9 @@ func (m *ManagerService) PublishDAG(id string) (string, int, error) {
 			currentVersion, currentSubversion = v, sv
 		}
 	}
+	if currentDoc["status"] == string(dag.Status_Published) {
+		return currentDoc["id"].(string), currentVersion, fmt.Errorf("DAG already published")
+	}
 	// Update the latest entry in place to set status=published
 	filter := map[string]interface{}{
 		"_id": currentDoc["_id"],
