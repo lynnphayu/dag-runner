@@ -36,7 +36,7 @@ func (h *ManagerHandler) SaveAdapter(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ManagerHandler) SaveDAG(w http.ResponseWriter, r *http.Request) {
-	var g dag.Graph[*dag.Action]
+	var g dag.Graph[*dag.Action, any]
 	if err := json.NewDecoder(r.Body).Decode(&g); err != nil {
 		log.Println("Invalid request body", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -92,7 +92,7 @@ func (h *ManagerHandler) UpdateDAG(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id := vars["id"]
 
-	var g dag.Graph[*dag.Action]
+	var g dag.Graph[*dag.Action, any]
 	if err := json.NewDecoder(r.Body).Decode(&g); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -118,6 +118,18 @@ func (h *ManagerHandler) PublishDAG(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"id": newID, "version": version, "status": "published"})
+}
+
+func (h *ManagerHandler) ListDAGVersions(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := vars["id"]
+	versions, err := h.managerService.ListDAGVersions(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(versions)
 }
 
 func (h *ManagerHandler) GetAdapter(w http.ResponseWriter, r *http.Request) {
@@ -174,6 +186,7 @@ func (h *ManagerHandler) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/dags/{id}", h.UpdateDAG).Methods("PUT")
 	router.HandleFunc("/v1/dags/{id}", h.DeleteDAG).Methods("DELETE")
 	router.HandleFunc("/v1/dags/{id}/publish", h.PublishDAG).Methods("POST")
+	router.HandleFunc("/v1/dags/{id}/versions", h.ListDAGVersions).Methods("GET")
 
 	router.HandleFunc("/v1/adapters", h.SaveAdapter).Methods("POST")
 	router.HandleFunc("/v1/adapters", h.ListAdapters).Methods("GET")

@@ -63,13 +63,13 @@ type Runner struct {
 	successorsMap   map[string][]string
 	predecessorsMap map[string][]string
 	rootNodes       []*Node[*Action]
-	graph           *Graph[*Action]
+	graph           *Graph[*Action, any]
 	db              *Persist
 	httpClient      *Http
 }
 
 // NewExecutor creates a new DAG executor
-func NewRunner(db Persist, http Http, dag *Graph[*Action]) *Runner {
+func NewRunner(db Persist, http Http, dag *Graph[*Action, any]) *Runner {
 	graphSize := dag.Size()
 	nodesMap := dag.NodesDict()
 	rootNodes := dag.RootNodes()

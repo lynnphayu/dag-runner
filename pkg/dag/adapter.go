@@ -3,6 +3,7 @@ package dag
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 type AdapterType string
@@ -13,14 +14,16 @@ const (
 )
 
 type Adapter[T HttpAdapter | SchedularAdapter | any] struct {
-	Type     AdapterType            `json:"type"  bson:"type"`
-	Name     string                 `json:"name" bson:"name"`
-	InputMap map[string]interface{} `json:"input" bson:"input"`
-	Meta     T                      `bson:"meta" json:"-"`
-	MetaRaw  json.RawMessage        `json:"meta" bson:"-"`
-	GraphID  string                 `json:"graphId" bson:"graphId"`
-	ID       string                 `json:"id" bson:"id"`
-	graph    *Graph[*Action]
+	Type       AdapterType            `json:"type"  bson:"type"`
+	Version    int                    `json:"version,omitempty" bson:"version,omitempty"`
+	Subversion int                    `json:"subversion,omitempty" bson:"subversion,omitempty"`
+	Name       string                 `json:"name" bson:"name"`
+	InputMap   map[string]interface{} `json:"input" bson:"input"`
+	Meta       T                      `bson:"meta" json:"-"`
+	MetaRaw    json.RawMessage        `json:"meta" bson:"-"`
+	GraphID    string                 `json:"graphId" bson:"graphId"`
+	ID         string                 `json:"id" bson:"id"`
+	CreatedAt  time.Time              `json:"createdAt,omitempty" bson:"createdAt,omitempty"`
 }
 
 type AuthType string

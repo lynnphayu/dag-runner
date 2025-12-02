@@ -3,6 +3,7 @@ package dag
 import (
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -12,21 +13,26 @@ type BackReferencable[T any] interface {
 }
 
 type Node[T any] struct {
-	ID           string   `json:"id"                     bson:"id"`
-	Name         string   `json:"name"                   bson:"name"`
-	Data         T        `json:"data"                   bson:"data"`
-	Dependencies []string `json:"dependencies,omitempty" bson:"dependencies,omitempty"`
-	Dependents   []string `json:"-"   bson:"-"`
+	ID           string    `json:"id"                     bson:"id"`
+	GraphID      string    `json:"graphId,omitempty"      bson:"graphId,omitempty"`
+	Version      int       `json:"version,omitempty"      bson:"version,omitempty"`
+	Subversion   int       `json:"subversion,omitempty"   bson:"subversion,omitempty"`
+	Name         string    `json:"name"                   bson:"name"`
+	Data         T         `json:"data"                   bson:"data"`
+	Dependencies []string  `json:"dependencies,omitempty" bson:"dependencies,omitempty"`
+	Dependents   []string  `json:"-"   bson:"-"`
+	CreatedAt    time.Time `json:"createdAt,omitempty"   bson:"createdAt,omitempty"`
 }
 
-type Graph[T any] struct {
+type Graph[T any, A any] struct {
 	ID         string              `json:"id"       bson:"id"`
 	Name       string              `json:"name"     bson:"name"`
 	Version    int                 `json:"version"  bson:"version"`
 	Subversion int                 `json:"subversion" bson:"subversion"`
 	Status     GraphStatus         `json:"status"   bson:"status"`
-	Nodes      map[string]*Node[T] `json:"nodes"    bson:"nodes"`
-	adapters   map[string]Adapter[any]
+	Nodes      map[string]*Node[T] `json:"nodes"`
+	Adapters   []*Adapter[A]       `json:"adapters"`
+	CreatedAt  time.Time           `json:"createdAt,omitempty" bson:"createdAt,omitempty"`
 }
 
 type GraphStatus string
@@ -57,31 +63,33 @@ func (n *Node[T]) IsRoot() bool {
 	return len(n.Dependencies) == 0
 }
 
-func NewGraph[T any]() *Graph[T] {
-	return &Graph[T]{
+func NewGraph[T any, A any]() *Graph[T, A] {
+	return &Graph[T, A]{
 		Nodes: make(map[string]*Node[T]),
 	}
 }
 
-func (g *Graph[T]) link(from, to *Node[T]) {
+func (g *Graph[T, A]) link(from, to *Node[T]) {
 	to.Dependencies = addUnique(to.Dependencies, from.ID)
 	from.Dependents = addUnique(from.Dependents, to.ID)
 }
 
-func (g *Graph[T]) unlink(from, to *Node[T]) {
+func (g *Graph[T, A]) unlink(from, to *Node[T]) {
 	to.Dependencies = removeId(to.Dependencies, from.ID)
 	from.Dependents = removeId(from.Dependents, to.ID)
 }
 
-func (g *Graph[T]) AddNode(node Node[T]) error {
+func (g *Graph[T, A]) AddNode(node Node[T]) error {
 	if _, exists := g.Nodes[node.ID]; exists {
 		return fmt.Errorf("node with ID %s already exists", node.ID)
 	}
+	// Ensure node references its parent graph for external collections
+	node.GraphID = g.ID
 	g.Nodes[node.ID] = &node
 	return nil
 }
 
-func (g *Graph[T]) RemoveNode(nodeID string) error {
+func (g *Graph[T, A]) RemoveNode(nodeID string) error {
 	node, exists := g.Nodes[nodeID]
 	if !exists {
 		return fmt.Errorf("node with ID %s does not exist", nodeID)
@@ -103,7 +111,7 @@ func (g *Graph[T]) RemoveNode(nodeID string) error {
 	return nil
 }
 
-func (g *Graph[T]) Node(nodeID string) (*Node[T], error) {
+func (g *Graph[T, A]) Node(nodeID string) (*Node[T], error) {
 	node, exists := g.Nodes[nodeID]
 	if !exists {
 		return nil, fmt.Errorf("node with ID %s does not exist", nodeID)
@@ -111,7 +119,7 @@ func (g *Graph[T]) Node(nodeID string) (*Node[T], error) {
 	return node, nil
 }
 
-func (g *Graph[T]) AddEdge(fromID, toID string) error {
+func (g *Graph[T, A]) AddEdge(fromID, toID string) error {
 	fromNode, exists := g.Nodes[fromID]
 	if !exists {
 		return fmt.Errorf("source node %s does not exist", fromID)
@@ -134,7 +142,7 @@ func (g *Graph[T]) AddEdge(fromID, toID string) error {
 }
 
 // RemoveEdge removes a dependency relationship between two nodes
-func (g *Graph[T]) RemoveEdge(fromID, toID string) error {
+func (g *Graph[T, A]) RemoveEdge(fromID, toID string) error {
 	fromNode, exists := g.Nodes[fromID]
 	if !exists {
 		return fmt.Errorf("source node %s does not exist", fromID)
@@ -150,11 +158,11 @@ func (g *Graph[T]) RemoveEdge(fromID, toID string) error {
 	return nil
 }
 
-func (g *Graph[T]) wouldCreateCycle(fromID, toID string) bool {
+func (g *Graph[T, A]) wouldCreateCycle(fromID, toID string) bool {
 	return g.hasPath(toID, fromID)
 }
 
-func (g *Graph[T]) hasPath(startID, endID string) bool {
+func (g *Graph[T, A]) hasPath(startID, endID string) bool {
 	if startID == endID {
 		return true
 	}
@@ -163,7 +171,7 @@ func (g *Graph[T]) hasPath(startID, endID string) bool {
 	return g.dfsPath(startID, endID, visited)
 }
 
-func (g *Graph[T]) dfsPath(currentID, targetID string, visited map[string]bool) bool {
+func (g *Graph[T, A]) dfsPath(currentID, targetID string, visited map[string]bool) bool {
 	if currentID == targetID {
 		return true
 	}
@@ -186,7 +194,7 @@ func (g *Graph[T]) dfsPath(currentID, targetID string, visited map[string]bool) 
 	return false
 }
 
-func (g *Graph[T]) topologicalSort() ([]string, error) {
+func (g *Graph[T, A]) topologicalSort() ([]string, error) {
 	// Kahn's algorithm
 	inDegree := make(map[string]int)
 	queue := make([]string, 0)
@@ -228,7 +236,7 @@ func (g *Graph[T]) topologicalSort() ([]string, error) {
 }
 
 // ValidateDAG validates that the graph is a proper DAG
-func (g *Graph[T]) ValidateDAG() error {
+func (g *Graph[T, A]) ValidateDAG() error {
 	// Check for cycles using topological sort
 	_, err := g.topologicalSort()
 	if err != nil {
@@ -279,7 +287,7 @@ func (g *Graph[T]) ValidateDAG() error {
 	return nil
 }
 
-func (g *Graph[T]) NodesDict() map[string]*Node[T] {
+func (g *Graph[T, A]) NodesDict() map[string]*Node[T] {
 	nodesMap := make(map[string]*Node[T])
 	for _, node := range g.Nodes {
 		nodesMap[node.ID] = node
@@ -288,7 +296,7 @@ func (g *Graph[T]) NodesDict() map[string]*Node[T] {
 }
 
 // GetRootNodes returns all nodes with no dependencies
-func (g *Graph[T]) RootNodes() []*Node[T] {
+func (g *Graph[T, A]) RootNodes() []*Node[T] {
 	roots := make([]*Node[T], 0)
 	for _, node := range g.Nodes {
 		if node.IsRoot() {
@@ -299,7 +307,7 @@ func (g *Graph[T]) RootNodes() []*Node[T] {
 }
 
 // GetLeafNodes returns all nodes with no dependents
-func (g *Graph[T]) LeafNodes() []Node[T] {
+func (g *Graph[T, A]) LeafNodes() []Node[T] {
 	leaves := make([]Node[T], 0)
 	for _, node := range g.Nodes {
 		if node.IsLeaf() {
@@ -310,16 +318,16 @@ func (g *Graph[T]) LeafNodes() []Node[T] {
 }
 
 // Size returns the number of nodes in the graph
-func (g *Graph[T]) Size() int {
+func (g *Graph[T, A]) Size() int {
 	return len(g.Nodes)
 }
 
 // IsEmpty returns true if the graph has no nodes
-func (g *Graph[T]) IsEmpty() bool {
+func (g *Graph[T, A]) IsEmpty() bool {
 	return len(g.Nodes) == 0
 }
 
-func (g *Graph[T]) FanOutEdges() map[string][]string {
+func (g *Graph[T, A]) FanOutEdges() map[string][]string {
 	edges := make(map[string][]string)
 	for nodeID, node := range g.Nodes {
 		for _, depID := range node.Dependents {
@@ -329,7 +337,7 @@ func (g *Graph[T]) FanOutEdges() map[string][]string {
 	return edges
 }
 
-func (g *Graph[T]) FanInEdges() map[string][]string {
+func (g *Graph[T, A]) FanInEdges() map[string][]string {
 	edges := make(map[string][]string)
 	for nodeID, node := range g.Nodes {
 		for _, depID := range node.Dependencies {

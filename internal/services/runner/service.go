@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -13,10 +14,12 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/mux"
 	"github.com/lestrrat-go/jwx/jwk"
+	"github.com/lynnphayu/dag-runner/internal/constants"
 	httpClient "github.com/lynnphayu/dag-runner/internal/repositories/http"
 	mongodb "github.com/lynnphayu/dag-runner/internal/repositories/mongodb"
 	postgres "github.com/lynnphayu/dag-runner/internal/repositories/postgres"
 	dag "github.com/lynnphayu/dag-runner/pkg/dag"
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 type RunnerService struct {
@@ -52,13 +55,104 @@ func (r *RunnerService) GetHTTPHandlerAdapter(
 	graphId string,
 ) (*dag.Runner, *dag.Adapter[dag.HttpAdapter], error) {
 
-	var graph dag.Graph[*dag.Action]
-	err := r.mongodb.FindOne("dags", map[string]interface{}{"id": graphId}, &graph)
+	// Load latest graph metadata (by version/subversion) and compose nodes from separate collection
+	graphDocs, err := r.mongodb.Retrieve(constants.GRAPH_COLLECTION, []string{}, map[string]interface{}{"id": graphId})
 	if err != nil {
 		return nil, nil, err
 	}
+	if len(graphDocs) == 0 {
+		return nil, nil, fmt.Errorf("graph not found: %s", graphId)
+	}
+	best := graphDocs[0]
+	getInt := func(v interface{}) int {
+		switch t := v.(type) {
+		case int:
+			return t
+		case int32:
+			return int(t)
+		case int64:
+			return int(t)
+		case float64:
+			return int(t)
+		default:
+			return 0
+		}
+	}
+	bestV := getInt(best["version"])
+	bestSV := getInt(best["subversion"])
+	for _, doc := range graphDocs[1:] {
+		v := getInt(doc["version"])
+		sv := getInt(doc["subversion"])
+		if v > bestV || (v == bestV && sv > bestSV) {
+			best = doc
+			bestV, bestSV = v, sv
+		}
+	}
+	var graph dag.Graph[*dag.Action, any]
+	bb, err := bson.Marshal(best)
+	if err != nil {
+		return nil, nil, err
+	}
+	var raw map[string]interface{}
+	if err := bson.Unmarshal(bb, &raw); err != nil {
+		return nil, nil, err
+	}
+	j, err := json.Marshal(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := json.Unmarshal(j, &graph); err != nil {
+		return nil, nil, err
+	}
+	// Attach nodes for the selected version
+	nodeDocs, err := r.mongodb.Retrieve(constants.NODE_COLLECTION, []string{}, map[string]interface{}{
+		"graphId":    graphId,
+		"version":    bestV,
+		"subversion": bestSV,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	graph.Nodes = make(map[string]*dag.Node[*dag.Action])
+	for _, nd := range nodeDocs {
+		nb, err := bson.Marshal(nd)
+		if err != nil {
+			return nil, nil, err
+		}
+		var m map[string]interface{}
+		if err := bson.Unmarshal(nb, &m); err != nil {
+			return nil, nil, err
+		}
+		jb, err := json.Marshal(m)
+		if err != nil {
+			return nil, nil, err
+		}
+		var node dag.Node[*dag.Action]
+		if err := json.Unmarshal(jb, &node); err != nil {
+			return nil, nil, err
+		}
+		if node.Data != nil {
+			node.Data.SetBackRef(&node)
+		}
+		if node.Dependents == nil {
+			node.Dependents = make([]string, 0)
+		}
+		n := node
+		graph.Nodes[node.ID] = &n
+	}
+	// Rebuild dependents from dependencies
+	for _, n := range graph.Nodes {
+		n.Dependents = make([]string, 0)
+	}
+	for _, n := range graph.Nodes {
+		for _, depID := range n.Dependencies {
+			if depNode, ok := graph.Nodes[depID]; ok {
+				depNode.Dependents = append(depNode.Dependents, n.ID)
+			}
+		}
+	}
 	var adapter dag.Adapter[dag.HttpAdapter]
-	if err := r.mongodb.FindOne("adapters", map[string]interface{}{"graphId": graphId, "type": "http"}, &adapter); err != nil {
+	if err := r.mongodb.FindOne(constants.ADAPTER_COLLECTION, map[string]interface{}{"graphId": graphId, "type": "http"}, &adapter); err != nil {
 		log.Printf("failed to find adapter: %v", err)
 		return nil, nil, err
 	}

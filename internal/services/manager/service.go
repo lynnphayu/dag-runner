@@ -4,16 +4,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/lynnphayu/dag-runner/internal/constants"
 	mongodb "github.com/lynnphayu/dag-runner/internal/repositories/mongodb"
 	"github.com/lynnphayu/dag-runner/pkg/dag"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type ManagerService struct {
 	db *mongodb.MongoDB
+}
+
+// DAGVersionInfo represents version metadata for a graph
+type DAGVersionInfo struct {
+	Version    int       `json:"version"`
+	Subversion int       `json:"subversion"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"createdAt,omitempty"`
 }
 
 func NewManagerService(mongoURI string) *ManagerService {
@@ -27,7 +39,7 @@ func NewManagerService(mongoURI string) *ManagerService {
 }
 
 func (m *ManagerService) GetAdapter(id string) (*dag.Adapter[any], error) {
-	collection := "adapters"
+	collection := constants.ADAPTER_COLLECTION
 	filter := map[string]interface{}{
 		"id": id,
 	}
@@ -55,7 +67,7 @@ func (m *ManagerService) GetAdapter(id string) (*dag.Adapter[any], error) {
 }
 
 func (m *ManagerService) ListAdapters(userID, graphID string) ([]dag.Adapter[any], error) {
-	collection := "adapters"
+	collection := constants.ADAPTER_COLLECTION
 	filter := map[string]interface{}{}
 
 	if userID != "" {
@@ -168,7 +180,7 @@ func (m *ManagerService) SaveAdapter(adapter *dag.Adapter[any]) error {
 		}
 	}
 
-	collection := "adapters"
+	collection := constants.ADAPTER_COLLECTION
 	uuid, err := uuid.NewRandom()
 	if err != nil {
 		return fmt.Errorf("failed to generate UUID: %w", err)
@@ -184,6 +196,10 @@ func (m *ManagerService) SaveAdapter(adapter *dag.Adapter[any]) error {
 	json.Unmarshal(marshalAdapter, &data)
 	data["id"] = uuid.String()
 	data["user_id"] = "12345"
+	data["version"] = 1
+	data["subversion"] = 1
+	now := time.Now().UTC()
+	data["createdAt"] = now
 
 	_, err = m.db.Create(collection, data)
 	if err != nil {
@@ -201,7 +217,7 @@ func (m *ManagerService) UpdateAdapter(adapter *dag.Adapter[any]) (interface{}, 
 		}
 	}
 
-	collection := "adapters"
+	collection := constants.ADAPTER_COLLECTION
 	filter := map[string]interface{}{
 		"id": adapter.ID,
 	}
@@ -222,8 +238,9 @@ func (m *ManagerService) UpdateAdapter(adapter *dag.Adapter[any]) (interface{}, 
 }
 
 // SaveDAG stores a DAG definition in MongoDB
-func (m *ManagerService) SaveDAG(g *dag.Graph[*dag.Action]) error {
-	collection := "dags"
+func (m *ManagerService) SaveDAG(g *dag.Graph[*dag.Action, any]) error {
+	graphsCollection := constants.GRAPH_COLLECTION
+	nodesCollection := constants.NODE_COLLECTION
 	uuid, err := uuid.NewRandom()
 	if err != nil {
 		return fmt.Errorf("failed to generate UUID: %w", err)
@@ -240,19 +257,57 @@ func (m *ManagerService) SaveDAG(g *dag.Graph[*dag.Action]) error {
 	data["version"] = 1
 	data["subversion"] = 1
 	data["status"] = string(dag.Status_Draft)
+	now := time.Now().UTC()
+	data["createdAt"] = now
+	// store graph metadata only (nodes are stored separately)
+	delete(data, "nodes")
+	delete(data, "adapters")
 
-	_, err = m.db.Create(collection, data)
+	_, err = m.db.Create(graphsCollection, data)
 	if err != nil {
 		return fmt.Errorf("failed to save DAG: %w", err)
+	}
+	// Persist nodes separately for this graph/version
+	for _, n := range g.Nodes {
+		// Set linkage and versioning on each node
+		n.GraphID = data["id"].(string)
+		n.Version = 1
+		n.Subversion = 1
+		n.CreatedAt = now
+		b, err := json.Marshal(n)
+		if err != nil {
+			return fmt.Errorf("failed to marshal node: %w", err)
+		}
+		nodeMap := map[string]interface{}{}
+		_ = json.Unmarshal(b, &nodeMap)
+		if _, err := m.db.Create(nodesCollection, nodeMap); err != nil {
+			return fmt.Errorf("failed to save node %s: %w", n.ID, err)
+		}
+	}
+	for _, a := range g.Adapters {
+		a.GraphID = data["id"].(string)
+		a.Version = 1
+		a.Subversion = 1
+		a.CreatedAt = now
+		b, err := json.Marshal(a)
+		if err != nil {
+			return fmt.Errorf("failed to marshal adapter: %w", err)
+		}
+		adapterMap := map[string]interface{}{}
+		_ = json.Unmarshal(b, &adapterMap)
+		if _, err := m.db.Create(constants.ADAPTER_COLLECTION, adapterMap); err != nil {
+			return fmt.Errorf("failed to save adapter %s: %w", a.ID, err)
+		}
 	}
 	return nil
 }
 
 // GetDAG retrieves a DAG definition by ID
-func (m *ManagerService) GetDAG(id string) (*dag.Graph[*dag.Action], error) {
-	collection := "dags"
+func (m *ManagerService) GetDAG(id string) (*dag.Graph[*dag.Action, any], error) {
+	graphsCollection := constants.GRAPH_COLLECTION
+	nodesCollection := constants.NODE_COLLECTION
 	// fetch all entries with the same business id and select the latest (max version, then max subversion)
-	groupResults, err := m.db.Retrieve(collection, []string{}, map[string]interface{}{"id": id})
+	groupResults, err := m.db.Retrieve(graphsCollection, []string{}, map[string]interface{}{"id": id})
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve DAG group: %w", err)
 	}
@@ -283,9 +338,88 @@ func (m *ManagerService) GetDAG(id string) (*dag.Graph[*dag.Action], error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal to JSON: %w", err)
 	}
-	var dagData dag.Graph[*dag.Action]
+	var dagData dag.Graph[*dag.Action, any]
 	if err := json.Unmarshal(jsonBytes, &dagData); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal to DAG: %w", err)
+	}
+	// Attach nodes for this specific (version, subversion)
+	nodesFilter := map[string]interface{}{
+		"graphId":    dagData.ID,
+		"version":    bestV,
+		"subversion": bestSV,
+	}
+	nodes, err := m.db.Retrieve(nodesCollection, []string{}, nodesFilter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve DAG nodes: %w", err)
+	}
+	if dagData.Nodes == nil {
+		dagData.Nodes = make(map[string]*dag.Node[*dag.Action])
+	}
+	// Fetch adapters for the same (version, subversion) as the selected graph
+	adapterFilter := map[string]interface{}{
+		"graphId":    dagData.ID,
+		"version":    bestV,
+		"subversion": bestSV,
+	}
+	adapters, err := m.db.Retrieve(constants.ADAPTER_COLLECTION, []string{}, adapterFilter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve DAG adapters: %w", err)
+	}
+	if dagData.Adapters == nil {
+		dagData.Adapters = make([]*dag.Adapter[any], 0)
+	}
+	for _, doc := range adapters {
+		// Marshal through map->json->struct to ensure Adapter.UnmarshalJSON runs
+		bb, err := bson.Marshal(doc)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal adapter BSON: %w", err)
+		}
+		var asMap map[string]interface{}
+		if err := bson.Unmarshal(bb, &asMap); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal adapter BSON to map: %w", err)
+		}
+		jb, err := json.Marshal(asMap)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal adapter map to JSON: %w", err)
+		}
+		var adapter dag.Adapter[any]
+		if err := json.Unmarshal(jb, &adapter); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal adapter JSON to struct: %w", err)
+		}
+		dagData.Adapters = append(dagData.Adapters, &adapter)
+	}
+	for _, doc := range nodes {
+		bb, err := bson.Marshal(doc)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal node BSON: %w", err)
+		}
+		// var asMap map[string]interface{}
+		var node dag.Node[*dag.Action]
+		if err := bson.Unmarshal(bb, &node); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal node to map: %w", err)
+		}
+		// Restore back-reference for actions
+		if node.Data != nil {
+			node.Data.SetBackRef(&node)
+		}
+		// Dependents are computed in-memory; ensure it's initialized
+		if node.Dependents == nil {
+			node.Dependents = make([]string, 0)
+		}
+		// Insert node into graph
+		n := node
+		dagData.Nodes[node.ID] = &n
+	}
+	// Rebuild dependents based on dependencies
+	for _, n := range dagData.Nodes {
+		n.Dependents = make([]string, 0)
+	}
+	for _, n := range dagData.Nodes {
+		for _, depID := range n.Dependencies {
+			if depNode, ok := dagData.Nodes[depID]; ok {
+				depNode.Dependents = append(depNode.Dependents, n.ID)
+			}
+		}
 	}
 	return &dagData, nil
 }
@@ -312,8 +446,9 @@ func extractVS(doc bson.M) (int, int) {
 }
 
 // ListDAGs retrieves all stored DAG definitions
-func (m *ManagerService) ListDAGs() ([]dag.Graph[*dag.Action], error) {
-	collection := "dags"
+func (m *ManagerService) ListDAGs() ([]dag.Graph[*dag.Action, any], error) {
+	graphsCollection := constants.GRAPH_COLLECTION
+	nodesCollection := constants.NODE_COLLECTION
 	// Use aggregation to group by id and pick the latest by (version, subversion)
 	pipeline := []bson.M{
 		{"$sort": bson.M{"id": 1, "version": -1, "subversion": -1}},
@@ -325,12 +460,12 @@ func (m *ManagerService) ListDAGs() ([]dag.Graph[*dag.Action], error) {
 		},
 		{"$replaceRoot": bson.M{"newRoot": "$doc"}},
 	}
-	results, err := m.db.Aggregate(collection, pipeline)
+	results, err := m.db.Aggregate(graphsCollection, pipeline)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list DAGs: %w", err)
 	}
 
-	dags := make([]dag.Graph[*dag.Action], 0, len(results))
+	dags := make([]dag.Graph[*dag.Action, any], 0, len(results))
 	for _, best := range results {
 		// Marshal/unmarshal through map->json to preserve nested types correctly
 		bsonBytes, err := bson.Marshal(best)
@@ -345,9 +480,82 @@ func (m *ManagerService) ListDAGs() ([]dag.Graph[*dag.Action], error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal to JSON: %w", err)
 		}
-		var dagData dag.Graph[*dag.Action]
+		var dagData dag.Graph[*dag.Action, any]
 		if err := json.Unmarshal(jsonBytes, &dagData); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal to DAG: %w", err)
+		}
+		// Attach nodes for this graph/version
+		v, sv := extractVS(best)
+		filter := map[string]interface{}{
+			"graphId":    dagData.ID,
+			"version":    v,
+			"subversion": sv,
+		}
+		adapters, err := m.db.Retrieve(constants.ADAPTER_COLLECTION, []string{}, filter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve DAG adapters: %w", err)
+		}
+		dagData.Adapters = make([]*dag.Adapter[any], 0)
+		for _, doc := range adapters {
+			bb, err := bson.Marshal(doc)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal adapter BSON: %w", err)
+			}
+			var asMap map[string]interface{}
+			if err := bson.Unmarshal(bb, &asMap); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal adapter to map: %w", err)
+			}
+			j, err := json.Marshal(asMap)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal adapter to JSON: %w", err)
+			}
+			var adapter dag.Adapter[any]
+			if err := json.Unmarshal(j, &adapter); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal adapter JSON to struct: %w", err)
+			}
+			dagData.Adapters = append(dagData.Adapters, &adapter)
+		}
+		nodes, err := m.db.Retrieve(nodesCollection, []string{}, filter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve DAG nodes: %w", err)
+		}
+		dagData.Nodes = make(map[string]*dag.Node[*dag.Action])
+		for _, doc := range nodes {
+			bb, err := bson.Marshal(doc)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal node BSON: %w", err)
+			}
+			var asMap map[string]interface{}
+			if err := bson.Unmarshal(bb, &asMap); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal node to map: %w", err)
+			}
+			j, err := json.Marshal(asMap)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal node to JSON: %w", err)
+			}
+			var node dag.Node[*dag.Action]
+			if err := json.Unmarshal(j, &node); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal node to typed: %w", err)
+			}
+			if node.Data != nil {
+				node.Data.SetBackRef(&node)
+			}
+			if node.Dependents == nil {
+				node.Dependents = make([]string, 0)
+			}
+			n := node
+			dagData.Nodes[node.ID] = &n
+		}
+		// Rebuild dependents based on dependencies
+		for _, n := range dagData.Nodes {
+			n.Dependents = make([]string, 0)
+		}
+		for _, n := range dagData.Nodes {
+			for _, depID := range n.Dependencies {
+				if depNode, ok := dagData.Nodes[depID]; ok {
+					depNode.Dependents = append(depNode.Dependents, n.ID)
+				}
+			}
 		}
 		dags = append(dags, dagData)
 	}
@@ -356,23 +564,29 @@ func (m *ManagerService) ListDAGs() ([]dag.Graph[*dag.Action], error) {
 
 // DeleteDAG removes a DAG definition by ID
 func (m *ManagerService) DeleteDAG(id string) error {
-	collection := "dags"
+	graphsCollection := constants.GRAPH_COLLECTION
+	nodesCollection := constants.NODE_COLLECTION
 	filter := map[string]interface{}{
 		"id": id,
 	}
 
-	_, err := m.db.Delete(collection, filter)
+	_, err := m.db.Delete(graphsCollection, filter)
 	if err != nil {
 		return fmt.Errorf("failed to delete DAG: %w", err)
+	}
+	// delete associated nodes (all versions)
+	if _, err := m.db.Delete(nodesCollection, map[string]interface{}{"graphId": id}); err != nil {
+		return fmt.Errorf("failed to delete DAG nodes: %w", err)
 	}
 	return nil
 }
 
 // UpdateDAG updates an existing DAG definition
-func (m *ManagerService) UpdateDAG(g *dag.Graph[*dag.Action]) (interface{}, error) {
-	collection := "dags"
+func (m *ManagerService) UpdateDAG(g *dag.Graph[*dag.Action, any]) (interface{}, error) {
+	graphsCollection := constants.GRAPH_COLLECTION
+	nodesCollection := constants.NODE_COLLECTION
 	// read current to inspect status and version
-	current, err := m.db.Retrieve(collection, []string{}, map[string]interface{}{"id": g.ID})
+	current, err := m.db.Retrieve(graphsCollection, []string{}, map[string]interface{}{"id": g.ID})
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve existing DAG: %w", err)
 	}
@@ -407,12 +621,48 @@ func (m *ManagerService) UpdateDAG(g *dag.Graph[*dag.Action]) (interface{}, erro
 	newData["status"] = string(dag.Status_Draft)
 	// keep same business id
 	newData["id"] = g.ID
+	now := time.Now().UTC()
+	newData["createdAt"] = now
+	// store graph metadata only
+	delete(newData, "nodes")
+	delete(newData, "adapters")
 	// If not published, bump subversion only in the new entry
 	if status != string(dag.Status_Published) {
 		newData["version"] = currentVersion
 		newData["subversion"] = currentSubversion + 1
-		if _, err := m.db.Create(collection, newData); err != nil {
+		if _, err := m.db.Create(graphsCollection, newData); err != nil {
 			return nil, fmt.Errorf("failed to create new draft revision: %w", err)
+		}
+		// persist nodes for this new revision
+		for _, n := range g.Nodes {
+			n.GraphID = g.ID
+			n.Version = currentVersion
+			n.Subversion = currentSubversion + 1
+			n.CreatedAt = now
+			b, err := json.Marshal(n)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal node: %w", err)
+			}
+			nodeMap := map[string]interface{}{}
+			_ = json.Unmarshal(b, &nodeMap)
+			if _, err := m.db.Create(nodesCollection, nodeMap); err != nil {
+				return nil, fmt.Errorf("failed to save node %s: %w", n.ID, err)
+			}
+		}
+		for _, a := range g.Adapters {
+			a.GraphID = g.ID
+			a.Version = currentVersion
+			a.Subversion = currentSubversion + 1
+			a.CreatedAt = now
+			b, err := json.Marshal(a)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal adapter: %w", err)
+			}
+			adapterMap := map[string]interface{}{}
+			_ = json.Unmarshal(b, &adapterMap)
+			if _, err := m.db.Create(constants.ADAPTER_COLLECTION, adapterMap); err != nil {
+				return nil, fmt.Errorf("failed to save adapter %s: %w", a.ID, err)
+			}
 		}
 		return map[string]interface{}{
 			"id":         newData["id"],
@@ -426,8 +676,39 @@ func (m *ManagerService) UpdateDAG(g *dag.Graph[*dag.Action]) (interface{}, erro
 	newData["subversion"] = 1
 	log.Println("newData", newData)
 	log.Println("verions", currentVersion, currentSubversion)
-	if _, err := m.db.Create(collection, newData); err != nil {
+	if _, err := m.db.Create(graphsCollection, newData); err != nil {
 		return nil, fmt.Errorf("failed to create new published version: %w", err)
+	}
+	// persist nodes for this new version
+	for _, n := range g.Nodes {
+		n.GraphID = g.ID
+		n.Version = currentVersion + 1
+		n.Subversion = 1
+		n.CreatedAt = now
+		b, err := json.Marshal(n)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal node: %w", err)
+		}
+		nodeMap := map[string]interface{}{}
+		_ = json.Unmarshal(b, &nodeMap)
+		if _, err := m.db.Create(nodesCollection, nodeMap); err != nil {
+			return nil, fmt.Errorf("failed to save node %s: %w", n.ID, err)
+		}
+	}
+	for _, a := range g.Adapters {
+		a.GraphID = g.ID
+		a.Version = currentVersion + 1
+		a.Subversion = 1
+		a.CreatedAt = now
+		b, err := json.Marshal(a)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal adapter: %w", err)
+		}
+		adapterMap := map[string]interface{}{}
+		_ = json.Unmarshal(b, &adapterMap)
+		if _, err := m.db.Create(constants.ADAPTER_COLLECTION, adapterMap); err != nil {
+			return nil, fmt.Errorf("failed to save adapter %s: %w", a.ID, err)
+		}
 	}
 	return map[string]interface{}{
 		"id":         newData["id"],
@@ -439,7 +720,7 @@ func (m *ManagerService) UpdateDAG(g *dag.Graph[*dag.Action]) (interface{}, erro
 
 // PublishDAG creates a new entry with status=published (no bumps)
 func (m *ManagerService) PublishDAG(id string) (string, int, error) {
-	collection := "dags"
+	collection := constants.GRAPH_COLLECTION
 	current, err := m.db.Retrieve(collection, []string{}, map[string]interface{}{"id": id})
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to retrieve existing DAG: %w", err)
@@ -470,52 +751,44 @@ func (m *ManagerService) PublishDAG(id string) (string, int, error) {
 	return currentDoc["id"].(string), currentVersion, nil
 }
 
-// ListDAGVersions returns all historical versions for a DAG id
-func (m *ManagerService) ListDAGVersions(id string) ([]dag.Graph[*dag.Action], error) {
-	collection := "dag_versions"
-	filter := map[string]interface{}{
-		"graph_id": id,
-	}
-	results, err := m.db.Retrieve(collection, []string{}, filter)
+// ListDAGVersions returns all versions and subversions for a given DAG id
+func (m *ManagerService) ListDAGVersions(id string) ([]DAGVersionInfo, error) {
+	collection := constants.GRAPH_COLLECTION
+	results, err := m.db.Retrieve(collection, []string{}, map[string]interface{}{"id": id})
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve DAG versions: %w", err)
 	}
-	dags := make([]dag.Graph[*dag.Action], len(results))
-	for i, result := range results {
-		bsonBytes, err := bson.Marshal(result)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal BSON: %w", err)
-		}
-		var dagData dag.Graph[*dag.Action]
-		if err := bson.Unmarshal(bsonBytes, &dagData); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal to DAG: %w", err)
-		}
-		dags[i] = dagData
-	}
-	return dags, nil
-}
-
-// GetDAGVersion retrieves a specific version for a DAG id
-func (m *ManagerService) GetDAGVersion(id string, version int) (*dag.Graph[*dag.Action], error) {
-	collection := "dag_versions"
-	filter := map[string]interface{}{
-		"graph_id": id,
-		"version":  version,
-	}
-	results, err := m.db.Retrieve(collection, []string{}, filter)
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve DAG version: %w", err)
-	}
 	if len(results) == 0 {
-		return nil, fmt.Errorf("DAG version not found: %s v%d", id, version)
+		return []DAGVersionInfo{}, nil
 	}
-	var dagData dag.Graph[*dag.Action]
-	bsonBytes, err := bson.Marshal(results[0])
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal BSON: %w", err)
+	versions := make([]DAGVersionInfo, 0, len(results))
+	for _, doc := range results {
+		v, sv := extractVS(doc)
+		status, _ := doc["status"].(string)
+		var createdAt time.Time
+		switch t := doc["createdAt"].(type) {
+		case time.Time:
+			createdAt = t.UTC()
+		case primitive.DateTime:
+			createdAt = t.Time().UTC()
+		case string:
+			if parsed, perr := time.Parse(time.RFC3339, t); perr == nil {
+				createdAt = parsed.UTC()
+			}
+		}
+		versions = append(versions, DAGVersionInfo{
+			Version:    v,
+			Subversion: sv,
+			Status:     status,
+			CreatedAt:  createdAt,
+		})
 	}
-	if err := bson.Unmarshal(bsonBytes, &dagData); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal to DAG: %w", err)
-	}
-	return &dagData, nil
+	// Sort by version desc, then subversion desc
+	sort.Slice(versions, func(i, j int) bool {
+		if versions[i].Version == versions[j].Version {
+			return versions[i].Subversion > versions[j].Subversion
+		}
+		return versions[i].Version > versions[j].Version
+	})
+	return versions, nil
 }
