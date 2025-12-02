@@ -38,7 +38,7 @@ const (
 type HttpAdapter struct {
 	Path     string                 `json:"path" bson:"path"`
 	Method   HTTPMethod             `json:"method" bson:"method"`
-	Response string                 `json:"response" bson:"response"`
+	Response map[string]interface{} `json:"response" bson:"response"`
 	AuthType AuthType               `json:"authType" bson:"authType"`
 	Auth     map[string]interface{} `json:"auth" bson:"auth"`
 

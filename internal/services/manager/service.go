@@ -166,7 +166,7 @@ func validateHTTPAdapter(adapter *dag.Adapter[any]) error {
 	if strings.TrimSpace(string(meta.Method)) == "" {
 		return fmt.Errorf("adapter method is required")
 	}
-	if strings.TrimSpace(meta.Response) == "" {
+	if len(meta.Response) == 0 {
 		return fmt.Errorf("adapter response selector is required")
 	}
 	return validateHTTPAuth(meta)
