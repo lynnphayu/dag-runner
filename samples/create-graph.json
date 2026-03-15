@@ -1,0 +1,75 @@
+{
+  "name": "Get User Orders",
+  "status": "draft",
+  "changeNote": "Initial version — fetch a user and their orders, join and enrich",
+  "nodes": {
+    "n_get_user": {
+      "id": "n_get_user",
+      "name": "get_user",
+      "data": {
+        "type": "query",
+        "meta": {
+          "table": "users",
+          "select": ["id", "name", "email"],
+          "where": {
+            "id": "$input.userId"
+          }
+        }
+      },
+      "dependencies": []
+    },
+
+    "n_get_orders": {
+      "id": "n_get_orders",
+      "name": "get_user_orders",
+      "data": {
+        "type": "query",
+        "meta": {
+          "table": "orders",
+          "select": ["id", "user_id", "amount", "status", "created_at"],
+          "where": {
+            "user_id": "$input.userId"
+          }
+        }
+      },
+      "dependencies": []
+    },
+
+    "n_join": {
+      "id": "n_join",
+      "name": "join_user_orders",
+      "data": {
+        "type": "join",
+        "meta": {
+          "type": "inner",
+          "on": { "id": "user_id" },
+          "left":  "$results.n_get_user",
+          "right": "$results.n_get_orders"
+        }
+      },
+      "dependencies": ["n_get_user", "n_get_orders"]
+    },
+
+    "n_notify": {
+      "id": "n_notify",
+      "name": "notify_webhook",
+      "data": {
+        "type": "http",
+        "meta": {
+          "method": "POST",
+          "url": "https://hooks.example.com/order-fetched",
+          "headers": {
+            "Content-Type": "application/json",
+            "X-Source": "dag-runner"
+          },
+          "query": {},
+          "body": {
+            "userId": "$input.userId",
+            "orderCount": "$results.n_get_orders"
+          }
+        }
+      },
+      "dependencies": ["n_get_orders"]
+    }
+  }
+}

@@ -122,14 +122,18 @@ func (h *ManagerHandler) PublishDAG(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	var url string
 	if h.runnerService != nil && h.router != nil {
 		if err := h.runnerService.RegisterFlowRoute(id, h.router); err != nil {
 			http.Error(w, fmt.Sprintf("failed to register adapters: %v", err), http.StatusInternalServerError)
 			return
 		}
+		if _, adapter, err := h.runnerService.GetHTTPHandlerAdapter(id); err == nil {
+			url = fmt.Sprintf("%s %s", adapter.Meta.Method, adapter.Meta.Path)
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"id": newID, "version": version, "status": "published"})
+	json.NewEncoder(w).Encode(map[string]interface{}{"id": newID, "version": version, "status": "published", "url": url})
 }
 
 func (h *ManagerHandler) ListDAGVersions(w http.ResponseWriter, r *http.Request) {
@@ -158,25 +162,6 @@ func (h *ManagerHandler) GetAdapter(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(adapter)
 }
 
-func (h *ManagerHandler) UpdateAdapter(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	id := vars["id"]
-
-	var adapter dag.Adapter[any]
-	if err := json.NewDecoder(r.Body).Decode(&adapter); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-	adapter.ID = id
-	result, err := h.managerService.UpdateAdapter(&adapter)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
-}
-
 func (h *ManagerHandler) ListAdapters(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("userId")
 	graphID := r.URL.Query().Get("graphId")
@@ -203,5 +188,4 @@ func (h *ManagerHandler) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/adapters", h.SaveAdapter).Methods("POST")
 	router.HandleFunc("/v1/adapters", h.ListAdapters).Methods("GET")
 	router.HandleFunc("/v1/adapters/{id}", h.GetAdapter).Methods("GET")
-	router.HandleFunc("/v1/adapters/{id}", h.UpdateAdapter).Methods("PUT")
 }

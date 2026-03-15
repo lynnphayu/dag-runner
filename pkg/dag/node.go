@@ -25,14 +25,15 @@ type Node[T any] struct {
 }
 
 type Graph[T any, A any] struct {
-	ID         string              `json:"id"       bson:"id"`
-	Name       string              `json:"name"     bson:"name"`
-	Version    int                 `json:"version"  bson:"version"`
-	Subversion int                 `json:"subversion" bson:"subversion"`
-	Status     GraphStatus         `json:"status"   bson:"status"`
+	ID         string              `json:"id"                    bson:"id"`
+	Name       string              `json:"name"                  bson:"name"`
+	Version    int                 `json:"version"               bson:"version"`
+	Subversion int                 `json:"subversion"            bson:"subversion"`
+	Status     GraphStatus         `json:"status"                bson:"status"`
+	ChangeNote string              `json:"changeNote,omitempty"  bson:"changeNote,omitempty"`
 	Nodes      map[string]*Node[T] `json:"nodes"`
 	Adapters   []*Adapter[A]       `json:"adapters"`
-	CreatedAt  time.Time           `json:"createdAt,omitempty" bson:"createdAt,omitempty"`
+	CreatedAt  time.Time           `json:"createdAt,omitempty"   bson:"createdAt,omitempty"`
 }
 
 type GraphStatus string
@@ -331,7 +332,7 @@ func (g *Graph[T, A]) FanOutEdges() map[string][]string {
 	edges := make(map[string][]string)
 	for nodeID, node := range g.Nodes {
 		for _, depID := range node.Dependents {
-			edges[depID] = append(edges[depID], nodeID)
+			edges[nodeID] = append(edges[nodeID], depID)
 		}
 	}
 	return edges
@@ -363,4 +364,25 @@ func removeId(slice []string, id string) []string {
 		}
 	}
 	return slice
+}
+
+// ExtractVersionSubversion reads the version and subversion integers from a
+// generic document map (bson.M / map[string]interface{}), returning 0 for any
+// field that is absent or of an unrecognised type.
+func ExtractVersionSubversion(doc map[string]interface{}) (version int, subversion int) {
+	toInt := func(v interface{}) int {
+		switch t := v.(type) {
+		case int:
+			return t
+		case int32:
+			return int(t)
+		case int64:
+			return int(t)
+		case float64:
+			return int(t)
+		default:
+			return 0
+		}
+	}
+	return toInt(doc["version"]), toInt(doc["subversion"])
 }

@@ -61,26 +61,18 @@ func (r *RunnerService) GetHTTPHandlerAdapter(
 	graphId string,
 ) (*dag.Runner, *dag.Adapter[dag.HttpAdapter], error) {
 
-	// Load latest graph metadata (by version/subversion) and compose nodes from separate collection
-	graphDocs, err := r.mongodb.Retrieve(constants.GRAPH_COLLECTION, []string{}, map[string]interface{}{
+	// Load latest published graph metadata by (version, subversion)
+	best, err := r.mongodb.FindLatestByVersion(constants.GRAPH_COLLECTION, map[string]interface{}{
 		"id":     graphId,
 		"status": string(dag.Status_Published),
 	})
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(graphDocs) == 0 {
+	if best == nil {
 		return nil, nil, fmt.Errorf("published graph not found: %s", graphId)
 	}
-	best := graphDocs[0]
-	bestV, bestSV := extractVersion(best)
-	for _, doc := range graphDocs[1:] {
-		v, sv := extractVersion(doc)
-		if v > bestV || (v == bestV && sv > bestSV) {
-			best = doc
-			bestV, bestSV = v, sv
-		}
-	}
+	bestV, bestSV := dag.ExtractVersionSubversion(best)
 	var graph dag.Graph[*dag.Action, any]
 	bb, err := bson.Marshal(best)
 	if err != nil {
@@ -144,6 +136,9 @@ func (r *RunnerService) GetHTTPHandlerAdapter(
 			}
 		}
 	}
+	// Try to find the http adapter at the exact published version first, then fall back
+	// to the latest adapter for the graph. This handles the case where an adapter was
+	// saved via POST /v1/adapters before the graph was updated (version mismatch).
 	adapterDocs, err := r.mongodb.Retrieve(constants.ADAPTER_COLLECTION, []string{}, map[string]interface{}{
 		"graphId":    graphId,
 		"version":    bestV,
@@ -177,6 +172,36 @@ func (r *RunnerService) GetHTTPHandlerAdapter(
 		adapter = candidate
 		foundAdapter = true
 		break
+	}
+	if !foundAdapter {
+		// Fall back: find the latest http_adapter for this graph regardless of version.
+		// This handles adapters saved via POST /v1/adapters that may have a different version.
+		log.Printf("http adapter not found at version %d.%d for graph %s, falling back to latest", bestV, bestSV, graphId)
+		fallbackDoc, fbErr := r.mongodb.FindLatestByVersion(constants.ADAPTER_COLLECTION, map[string]interface{}{
+			"graphId": graphId,
+			"type":    string(dag.Adapter_Http),
+		})
+		if fbErr != nil || fallbackDoc == nil {
+			err := fmt.Errorf("http adapter not found for graph %s version %d.%d", graphId, bestV, bestSV)
+			log.Println(err.Error())
+			return nil, nil, err
+		}
+		ab, err := bson.Marshal(fallbackDoc)
+		if err != nil {
+			return nil, nil, err
+		}
+		var m map[string]interface{}
+		if err := bson.Unmarshal(ab, &m); err != nil {
+			return nil, nil, err
+		}
+		jb, err := json.Marshal(m)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := json.Unmarshal(jb, &adapter); err != nil {
+			return nil, nil, fmt.Errorf("failed to unmarshal fallback adapter: %w", err)
+		}
+		foundAdapter = true
 	}
 	if !foundAdapter {
 		err := fmt.Errorf("http adapter not found for graph %s version %d.%d", graphId, bestV, bestSV)
@@ -523,8 +548,8 @@ func (r *RunnerService) RegisterAllPublishedFlowRoutes(router *mux.Router) error
 			continue
 		}
 		if existing, ok := bestByGraph[graphID]; ok {
-			v, sv := extractVersion(doc)
-			ev, esv := extractVersion(existing)
+			v, sv := dag.ExtractVersionSubversion(doc)
+			ev, esv := dag.ExtractVersionSubversion(existing)
 			if v > ev || (v == ev && sv > esv) {
 				bestByGraph[graphID] = doc
 			}
@@ -552,26 +577,4 @@ func (r *RunnerService) GetTableNames() ([]string, error) {
 
 func (r *RunnerService) GetColumns(tableName string) (map[string]string, error) {
 	return r.postgresdb.GetColumns(tableName)
-}
-
-func getIntValue(v interface{}) int {
-	switch t := v.(type) {
-	case int:
-		return t
-	case int32:
-		return int(t)
-	case int64:
-		return int(t)
-	case float64:
-		return int(t)
-	default:
-		return 0
-	}
-}
-
-func extractVersion(doc map[string]interface{}) (int, int) {
-	if doc == nil {
-		return 0, 0
-	}
-	return getIntValue(doc["version"]), getIntValue(doc["subversion"])
 }

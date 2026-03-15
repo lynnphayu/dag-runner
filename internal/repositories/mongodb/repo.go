@@ -187,6 +187,32 @@ func (r *MongoDB) GetCollectionNames() ([]string, error) {
 	return collections, nil
 }
 
+func (r *MongoDB) FindLatestByVersion(collection string, filter map[string]interface{}) (bson.M, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	pipeline := []bson.M{
+		{"$match": filter},
+		{"$sort": bson.M{"version": -1, "subversion": -1}},
+		{"$limit": 1},
+	}
+
+	cursor, err := r.db.Collection(collection).Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute FindLatestByVersion: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		return nil, fmt.Errorf("failed to decode FindLatestByVersion results: %w", err)
+	}
+	if len(results) == 0 {
+		return nil, nil
+	}
+	return results[0], nil
+}
+
 // Aggregate runs an aggregation pipeline and returns the resulting documents
 func (r *MongoDB) Aggregate(collection string, pipeline interface{}) ([]bson.M, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

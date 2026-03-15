@@ -1,0 +1,29 @@
+{
+  "type": "http_adapter",
+  "name": "get_user_orders_endpoint",
+  "graphId": "<graph-id-returned-by-POST-/v1/dags>",
+
+  "input": {
+    "userId": "$path.userId"
+  },
+
+  "meta": {
+    "path": "/users/{userId}/orders",
+    "method": "GET",
+
+    "authType": "bearer",
+    "auth": {
+      "jwksUrl": "https://auth.example.com/.well-known/jwks.json",
+      "audience": "dag-runner-api",
+      "issuer":   "https://auth.example.com/"
+    },
+
+    "querySchema": {},
+    "bodySchema":  {},
+
+    "response": {
+      "user":   "$results.n_get_user[0]",
+      "orders": "$results.n_get_orders"
+    }
+  }
+}

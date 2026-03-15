@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"reflect"
 	"strconv"
 	"strings"
@@ -85,7 +86,14 @@ func matchJoinConditions(left, right map[string]interface{}, on map[string]strin
 	for leftKey, rightKey := range on {
 		leftVal := left[leftKey]
 		rightVal := right[rightKey]
-		if !reflect.DeepEqual(leftVal, rightVal) {
+		if reflect.DeepEqual(leftVal, rightVal) {
+			continue
+		}
+		// Fallback: compare as strings to handle type mismatches (e.g. [16]byte vs string)
+		leftStr := fmt.Sprintf("%v", leftVal)
+		rightStr := fmt.Sprintf("%v", rightVal)
+		log.Printf("[join] comparing %s(%T)=%q vs %s(%T)=%q → match=%v", leftKey, leftVal, leftStr, rightKey, rightVal, rightStr, leftStr == rightStr)
+		if leftStr != rightStr {
 			return false
 		}
 	}
@@ -364,6 +372,11 @@ func ResolveV2[T []map[string]T | map[string]T | string | bool | int | interface
 			// Try direct type assertion
 			if converted, ok := result.(T); ok {
 				return converted
+			}
+			// Nil result — return zero value instead of panicking
+			if result == nil {
+				var zero T
+				return zero
 			}
 			// Try string conversion for bool/int types
 			return any(result).(T)

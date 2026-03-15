@@ -2,6 +2,7 @@ package dag
 
 import (
 	"fmt"
+	"log"
 	"slices"
 	"sync"
 
@@ -22,111 +23,110 @@ type ExecutionContext struct {
 	successorsMap   map[string][]string
 	predecessorsMap map[string][]string
 	context         Context
-	output          interface{}
 
-	waitList          sync.Map
-	executor          *Runner
-	wg                sync.WaitGroup
-	errorChannel      chan ErrEvt
-	completionChannel chan string
+	resultsLock  sync.RWMutex
+	waitList     sync.Map
+	executor     *Runner
+	wg           sync.WaitGroup
+	errorChannel chan ErrEvt
+	// stepDone holds one channel per node; closed (not sent on) when the step
+	// finishes — whether successfully or with an error. Closing broadcasts to
+	// all goroutines waiting on the same dependency simultaneously.
+	stepDone map[string]chan struct{}
 }
 
-func NewExecutionContext(
-	input map[string]interface{},
-	executor *Runner,
-) *ExecutionContext {
-	context := Context{
-		Results: map[string]interface{}{},
-		Input:   input,
+func NewExecutionContext(input map[string]interface{}, executor *Runner) *ExecutionContext {
+	stepDone := make(map[string]chan struct{}, len(executor.nodesDict))
+	for id := range executor.nodesDict {
+		stepDone[id] = make(chan struct{})
 	}
-	successorsMap := executor.successorsMap
-	predecessorsMap := executor.predecessorsMap
-	graphSize := executor.graphSize
-
 	return &ExecutionContext{
-		successorsMap:     successorsMap,
-		predecessorsMap:   predecessorsMap,
-		context:           context,
-		executor:          executor,
-		waitList:          sync.Map{},
-		wg:                sync.WaitGroup{},
-		errorChannel:      make(chan ErrEvt, graphSize),
-		completionChannel: make(chan string, graphSize),
+		successorsMap:   executor.successorsMap,
+		predecessorsMap: executor.predecessorsMap,
+		context:         Context{Input: input, Results: map[string]interface{}{}},
+		executor:        executor,
+		errorChannel:    make(chan ErrEvt, executor.graphSize),
+		stepDone:        stepDone,
 	}
 }
 
-// initExecution executes a single step asynchronously and triggers dependent steps
+func (e *ExecutionContext) fail(stepID string, err error) {
+	e.errorChannel <- ErrEvt{StepID: stepID, Err: err}
+	close(e.stepDone[stepID])
+}
+
+// initExecution executes a single step asynchronously and triggers dependent steps.
 func (e *ExecutionContext) initExecution(step *Node[*Action]) {
 	defer e.wg.Done()
 
 	for _, dep := range e.predecessorsMap[step.ID] {
-		if _, ok := (e.context.Results)[dep]; !ok {
-			// wait for dependent steps to complete from completion channel
-			for stepId := range e.completionChannel {
-				if dep == stepId {
-					break
-				}
-			}
+		// Block until the dependency finishes. Closing (not sending) means every
+		// goroutine waiting on the same dep unblocks simultaneously.
+		<-e.stepDone[dep]
+
+		// Presence in Results means success; absence means the dep failed.
+		e.resultsLock.RLock()
+		_, depSucceeded := e.context.Results[dep]
+		e.resultsLock.RUnlock()
+
+		if !depSucceeded {
+			log.Printf("[step:%s] skipped: dependency %s failed", step.ID, dep)
+			e.fail(step.ID, fmt.Errorf("dependency %s failed", dep))
+			return
 		}
 	}
 
+	log.Printf("[step:%s] starting execution (type=%s)", step.ID, step.Data.Type)
 	result, err := step.Data.Execute(e)
 	if err != nil {
-		e.errorChannel <- ErrEvt{
-			StepID: step.ID,
-			Err:    err,
-		}
+		log.Printf("[step:%s] failed: %v", step.ID, err)
+		e.fail(step.ID, err)
 		return
 	}
 
-	(e.context.Results)[step.ID] = result
-	e.completionChannel <- step.ID
+	log.Printf("[step:%s] completed successfully: %+v", step.ID, result)
+	e.resultsLock.Lock()
+	e.context.Results[step.ID] = result
+	e.resultsLock.Unlock()
+	close(e.stepDone[step.ID])
 
 	for _, dep := range e.successorsMap[step.ID] {
-		if _, ok := e.waitList.Load(dep); !ok {
-			e.waitList.Store(dep, true)
+		if _, alreadyQueued := e.waitList.LoadOrStore(dep, true); !alreadyQueued {
 			e.wg.Add(1)
 			go e.initExecution(e.executor.nodesDict[dep])
 		}
 	}
 }
 
-func eveluateCondition(left interface{}, right interface{}, operator Operator, ctx *Context) bool {
+func evaluateCondition(left interface{}, right interface{}, operator Operator, ctx *Context) bool {
 	if v, ok := left.(string); ok {
-		resolvedLeft := ResolveV2[interface{}](v, nil, ctx)
-		left = resolvedLeft
+		left = ResolveV2[interface{}](v, nil, ctx)
 	} else if v, ok := left.(Condition); ok {
-		left = eveluateCondition(v.Left, v.Right, v.Operator, ctx)
+		left = evaluateCondition(v.Left, v.Right, v.Operator, ctx)
 	}
 
 	if v, ok := right.(string); ok {
-		resolvedRight := ResolveV2[interface{}](v, nil, ctx)
-		right = resolvedRight
+		right = ResolveV2[interface{}](v, nil, ctx)
 	} else if v, ok := right.(Condition); ok {
-		right = eveluateCondition(v.Left, v.Right, v.Operator, ctx)
+		right = evaluateCondition(v.Left, v.Right, v.Operator, ctx)
 	}
-	// Convert left and right to the same type for comparison
+
 	switch {
 	case utils.IsNumeric(left) || utils.IsNumeric(right):
-		// Convert both to float64 for numeric comparisons
-		leftNum := utils.ToFloat64(left)
-		rightNum := utils.ToFloat64(right)
-		left = leftNum
-		right = rightNum
+		left = utils.ToFloat64(left)
+		right = utils.ToFloat64(right)
 	case utils.IsString(left) || utils.IsString(right):
-		// Convert both to strings for string comparisons
 		left = fmt.Sprintf("%v", left)
 		right = fmt.Sprintf("%v", right)
 	case utils.IsBool(left) || utils.IsBool(right):
-		// Convert both to bools for boolean comparisons
-		leftBool, leftOk := left.(bool)
-		rightBool, rightOk := right.(bool)
-		if !leftOk || !rightOk {
+		if _, ok := left.(bool); !ok {
 			return false
 		}
-		left = leftBool
-		right = rightBool
+		if _, ok := right.(bool); !ok {
+			return false
+		}
 	}
+
 	switch operator {
 	case EQ:
 		return left == right

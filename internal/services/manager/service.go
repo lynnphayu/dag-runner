@@ -25,6 +25,7 @@ type DAGVersionInfo struct {
 	Version    int       `json:"version"`
 	Subversion int       `json:"subversion"`
 	Status     string    `json:"status"`
+	ChangeNote string    `json:"changeNote,omitempty"`
 	CreatedAt  time.Time `json:"createdAt,omitempty"`
 }
 
@@ -187,7 +188,6 @@ func (m *ManagerService) SaveAdapter(adapter *dag.Adapter[any]) error {
 	}
 
 	marshalAdapter, err := json.Marshal(adapter)
-
 	if err != nil {
 		return fmt.Errorf("failed to marshal adapter: %w", err)
 	}
@@ -196,8 +196,18 @@ func (m *ManagerService) SaveAdapter(adapter *dag.Adapter[any]) error {
 	json.Unmarshal(marshalAdapter, &data)
 	data["id"] = uuid.String()
 	data["user_id"] = "12345"
-	data["version"] = 1
-	data["subversion"] = 1
+
+	version := 1
+	subversion := 1
+	if adapter.GraphID != "" {
+		graphDoc, err := m.db.FindLatestByVersion(constants.GRAPH_COLLECTION, map[string]interface{}{"id": adapter.GraphID})
+		if err == nil && graphDoc != nil {
+			version, subversion = dag.ExtractVersionSubversion(graphDoc)
+		}
+	}
+	data["version"] = version
+	data["subversion"] = subversion
+
 	now := time.Now().UTC()
 	data["createdAt"] = now
 
@@ -206,35 +216,6 @@ func (m *ManagerService) SaveAdapter(adapter *dag.Adapter[any]) error {
 		return fmt.Errorf("failed to save adapter: %w", err)
 	}
 	return nil
-}
-
-// UpdateAdapter updates an existing adapter definition
-func (m *ManagerService) UpdateAdapter(adapter *dag.Adapter[any]) (interface{}, error) {
-	// Validate adapter before update
-	if adapter.Type == dag.Adapter_Http {
-		if err := validateHTTPAdapter(adapter); err != nil {
-			return nil, err
-		}
-	}
-
-	collection := constants.ADAPTER_COLLECTION
-	filter := map[string]interface{}{
-		"id": adapter.ID,
-	}
-
-	marshalAdapter, err := json.Marshal(adapter)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal adapter: %w", err)
-	}
-
-	data := map[string]interface{}{}
-	json.Unmarshal(marshalAdapter, &data)
-
-	r, err := m.db.Update(collection, data, filter)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update adapter: %w", err)
-	}
-	return r, nil
 }
 
 // SaveDAG stores a DAG definition in MongoDB
@@ -306,25 +287,14 @@ func (m *ManagerService) SaveDAG(g *dag.Graph[*dag.Action, any]) error {
 func (m *ManagerService) GetDAG(id string) (*dag.Graph[*dag.Action, any], error) {
 	graphsCollection := constants.GRAPH_COLLECTION
 	nodesCollection := constants.NODE_COLLECTION
-	// fetch all entries with the same business id and select the latest (max version, then max subversion)
-	groupResults, err := m.db.Retrieve(graphsCollection, []string{}, map[string]interface{}{"id": id})
+	best, err := m.db.FindLatestByVersion(graphsCollection, map[string]interface{}{"id": id})
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve DAG group: %w", err)
+		return nil, fmt.Errorf("failed to retrieve DAG: %w", err)
 	}
-	candidates := groupResults
-	if len(candidates) == 0 {
+	if best == nil {
 		return nil, fmt.Errorf("DAG not found: %s", id)
 	}
-	// Find the doc with highest (version, subversion)
-	best := candidates[0]
-	bestV, bestSV := extractVS(best)
-	for _, doc := range candidates[1:] {
-		v, sv := extractVS(doc)
-		if v > bestV || (v == bestV && sv > bestSV) {
-			best = doc
-			bestV, bestSV = v, sv
-		}
-	}
+	bestV, bestSV := dag.ExtractVersionSubversion(best)
 	// Marshal/unmarshal into strongly typed DAG
 	bsonBytes, err := bson.Marshal(best)
 	if err != nil {
@@ -424,27 +394,6 @@ func (m *ManagerService) GetDAG(id string) (*dag.Graph[*dag.Action, any], error)
 	return &dagData, nil
 }
 
-// extractVS reads version and subversion from a generic document, defaulting to 0 if absent
-func extractVS(doc bson.M) (int, int) {
-	getInt := func(v interface{}) int {
-		switch t := v.(type) {
-		case int:
-			return t
-		case int32:
-			return int(t)
-		case int64:
-			return int(t)
-		case float64:
-			return int(t)
-		default:
-			return 0
-		}
-	}
-	v := getInt(doc["version"])
-	sv := getInt(doc["subversion"])
-	return v, sv
-}
-
 // ListDAGs retrieves all stored DAG definitions
 func (m *ManagerService) ListDAGs() ([]dag.Graph[*dag.Action, any], error) {
 	graphsCollection := constants.GRAPH_COLLECTION
@@ -485,7 +434,7 @@ func (m *ManagerService) ListDAGs() ([]dag.Graph[*dag.Action, any], error) {
 			return nil, fmt.Errorf("failed to unmarshal to DAG: %w", err)
 		}
 		// Attach nodes for this graph/version
-		v, sv := extractVS(best)
+		v, sv := dag.ExtractVersionSubversion(best)
 		filter := map[string]interface{}{
 			"graphId":    dagData.ID,
 			"version":    v,
@@ -578,6 +527,10 @@ func (m *ManagerService) DeleteDAG(id string) error {
 	if _, err := m.db.Delete(nodesCollection, map[string]interface{}{"graphId": id}); err != nil {
 		return fmt.Errorf("failed to delete DAG nodes: %w", err)
 	}
+	// delete associated adapters (all versions)
+	if _, err := m.db.Delete(constants.ADAPTER_COLLECTION, map[string]interface{}{"graphId": id}); err != nil {
+		return fmt.Errorf("failed to delete DAG adapters: %w", err)
+	}
 	return nil
 }
 
@@ -585,26 +538,15 @@ func (m *ManagerService) DeleteDAG(id string) error {
 func (m *ManagerService) UpdateDAG(g *dag.Graph[*dag.Action, any]) (interface{}, error) {
 	graphsCollection := constants.GRAPH_COLLECTION
 	nodesCollection := constants.NODE_COLLECTION
-	// read current to inspect status and version
-	current, err := m.db.Retrieve(graphsCollection, []string{}, map[string]interface{}{"id": g.ID})
+	currentDoc, err := m.db.FindLatestByVersion(graphsCollection, map[string]interface{}{"id": g.ID})
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve existing DAG: %w", err)
 	}
-	if len(current) == 0 {
+	if currentDoc == nil {
 		return nil, fmt.Errorf("DAG not found: %s", g.ID)
 	}
-	// pick latest by (version, subversion)
-	currentDoc := current[0]
-	currentVersion, currentSubversion := extractVS(currentDoc)
-	for _, doc := range current[1:] {
-		v, sv := extractVS(doc)
-		if v > currentVersion || (v == currentVersion && sv > currentSubversion) {
-			currentDoc = doc
-			currentVersion, currentSubversion = v, sv
-		}
-	}
+	currentVersion, currentSubversion := dag.ExtractVersionSubversion(currentDoc)
 	status, _ := currentDoc["status"].(string)
-	// read current version/subversion
 
 	// prepare updated data from payload
 	marshalDag, err := json.Marshal(g)
@@ -721,23 +663,14 @@ func (m *ManagerService) UpdateDAG(g *dag.Graph[*dag.Action, any]) (interface{},
 // PublishDAG creates a new entry with status=published (no bumps)
 func (m *ManagerService) PublishDAG(id string) (string, int, error) {
 	collection := constants.GRAPH_COLLECTION
-	current, err := m.db.Retrieve(collection, []string{}, map[string]interface{}{"id": id})
+	currentDoc, err := m.db.FindLatestByVersion(collection, map[string]interface{}{"id": id})
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to retrieve existing DAG: %w", err)
 	}
-	if len(current) == 0 {
+	if currentDoc == nil {
 		return "", 0, fmt.Errorf("DAG not found: %s", id)
 	}
-	// pick latest by (version, subversion)
-	currentDoc := current[0]
-	currentVersion, currentSubversion := extractVS(currentDoc)
-	for _, doc := range current[1:] {
-		v, sv := extractVS(doc)
-		if v > currentVersion || (v == currentVersion && sv > currentSubversion) {
-			currentDoc = doc
-			currentVersion, currentSubversion = v, sv
-		}
-	}
+	currentVersion, _ := dag.ExtractVersionSubversion(currentDoc)
 	if currentDoc["status"] == string(dag.Status_Published) {
 		return currentDoc["id"].(string), currentVersion, fmt.Errorf("DAG already published")
 	}
@@ -766,7 +699,7 @@ func (m *ManagerService) ListDAGVersions(id string) ([]DAGVersionInfo, error) {
 	}
 	versions := make([]DAGVersionInfo, 0, len(results))
 	for _, doc := range results {
-		v, sv := extractVS(doc)
+		v, sv := dag.ExtractVersionSubversion(doc)
 		status, _ := doc["status"].(string)
 		var createdAt time.Time
 		switch t := doc["createdAt"].(type) {
@@ -779,10 +712,12 @@ func (m *ManagerService) ListDAGVersions(id string) ([]DAGVersionInfo, error) {
 				createdAt = parsed.UTC()
 			}
 		}
+		changeNote, _ := doc["changeNote"].(string)
 		versions = append(versions, DAGVersionInfo{
 			Version:    v,
 			Subversion: sv,
 			Status:     status,
+			ChangeNote: changeNote,
 			CreatedAt:  createdAt,
 		})
 	}

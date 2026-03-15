@@ -113,19 +113,45 @@ func (d *Delete) Validate(execCtx *ExecutionContext, action *Action) error {
 }
 
 type Join struct {
-	On    map[string]string `json:"on"    bson:"on"`
-	Type  JoinType          `json:"type"  bson:"type"`
-	Left  string            `json:"left"  bson:"left"`
-	Right string            `json:"right" bson:"right"`
+	On       map[string]string `json:"on"               bson:"on"`
+	JoinType JoinType          `json:"joinType,omitempty" bson:"joinType,omitempty"`
+	Left     string            `json:"left"             bson:"left"`
+	Right    string            `json:"right"            bson:"right"`
+}
+
+func toRowSlice(v interface{}) ([]map[string]interface{}, error) {
+	switch t := v.(type) {
+	case []map[string]interface{}:
+		return t, nil
+	case []interface{}:
+		rows := make([]map[string]interface{}, 0, len(t))
+		for i, item := range t {
+			row, ok := item.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("row %d is %T, not a map", i, item)
+			}
+			rows = append(rows, row)
+		}
+		return rows, nil
+	case nil:
+		return []map[string]interface{}{}, nil
+	default:
+		return nil, fmt.Errorf("expected a slice of rows, got %T", v)
+	}
 }
 
 func (j *Join) Execute(execCtx *ExecutionContext, action *Action) (interface{}, error) {
-	var datasets [][]map[string]interface{}
-	left := ResolveValues(j.Left, nil, &execCtx.context).([]map[string]interface{})
-	right := ResolveValues(j.Right, nil, &execCtx.context).([]map[string]interface{})
-	datasets = append(datasets, left)
-	datasets = append(datasets, right)
-	return performJoin(datasets, j.On, j.Type)
+	leftRaw := ResolveValues(j.Left, nil, &execCtx.context)
+	rightRaw := ResolveValues(j.Right, nil, &execCtx.context)
+	left, err := toRowSlice(leftRaw)
+	if err != nil {
+		return nil, fmt.Errorf("join left dataset: %w", err)
+	}
+	right, err := toRowSlice(rightRaw)
+	if err != nil {
+		return nil, fmt.Errorf("join right dataset: %w", err)
+	}
+	return performJoin([][]map[string]interface{}{left, right}, j.On, j.JoinType)
 }
 
 func (j *Join) Validate(execCtx *ExecutionContext, action *Action) error {
@@ -206,7 +232,7 @@ type Condition struct {
 }
 
 func (c *Condition) Execute(execCtx *ExecutionContext, action *Action) (interface{}, error) {
-	result := eveluateCondition(
+	result := evaluateCondition(
 		c.Left,
 		c.Right,
 		c.Operator,

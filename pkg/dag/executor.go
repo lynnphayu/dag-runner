@@ -2,6 +2,7 @@ package dag
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 )
 
@@ -88,6 +89,7 @@ func NewRunner(db Persist, http Http, dag *Graph[*Action, any]) *Runner {
 
 // Execute runs the DAG with parallel execution of steps
 func (e *Runner) Execute(input map[string]interface{}) (map[string]interface{}, error) {
+	log.Printf("[dag] starting execution with input: %v", input)
 	execution := NewExecutionContext(input, e)
 
 	// Start execution from the entry step
@@ -101,9 +103,10 @@ func (e *Runner) Execute(input map[string]interface{}) (map[string]interface{}, 
 	// Check for any errors
 	select {
 	case err := <-execution.errorChannel:
+		log.Printf("[dag] execution failed at step %s: %v", err.StepID, err.Err)
 		return nil, fmt.Errorf("step %s failed: %w", err.StepID, err.Err)
 	default:
-		// No errors occurred
+		log.Printf("[dag] execution completed successfully")
 	}
 
 	return execution.context.Results, nil

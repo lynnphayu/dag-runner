@@ -57,11 +57,14 @@ func (a *Adapter[T]) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	a.Type = temp.Type
+	a.Version = temp.Version
+	a.Subversion = temp.Subversion
 	a.Name = temp.Name
 	a.ID = temp.ID
 	a.InputMap = temp.InputMap
 	a.GraphID = temp.GraphID
 	a.MetaRaw = temp.MetaRaw
+	a.CreatedAt = temp.CreatedAt
 
 	switch a.Type {
 	case Adapter_Http:
