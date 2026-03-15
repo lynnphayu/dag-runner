@@ -1,6 +1,7 @@
 package dag
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"slices"
@@ -17,6 +18,7 @@ type ErrEvt struct {
 type Context struct {
 	Input   map[string]interface{}
 	Results map[string]interface{}
+	Errors  map[string]error // Leaf node errors captured here
 }
 
 type ExecutionContext struct {
@@ -25,6 +27,7 @@ type ExecutionContext struct {
 	context         Context
 
 	resultsLock  sync.RWMutex
+	errorsLock   sync.RWMutex
 	waitList     sync.Map
 	executor     *Runner
 	wg           sync.WaitGroup
@@ -33,6 +36,9 @@ type ExecutionContext struct {
 	// finishes — whether successfully or with an error. Closing broadcasts to
 	// all goroutines waiting on the same dependency simultaneously.
 	stepDone map[string]chan struct{}
+	// ctx is used for early termination on non-leaf node failures
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func NewExecutionContext(input map[string]interface{}, executor *Runner) *ExecutionContext {
@@ -40,18 +46,37 @@ func NewExecutionContext(input map[string]interface{}, executor *Runner) *Execut
 	for id := range executor.nodesDict {
 		stepDone[id] = make(chan struct{})
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &ExecutionContext{
 		successorsMap:   executor.successorsMap,
 		predecessorsMap: executor.predecessorsMap,
-		context:         Context{Input: input, Results: map[string]interface{}{}},
+		context:         Context{Input: input, Results: map[string]interface{}{}, Errors: map[string]error{}},
 		executor:        executor,
 		errorChannel:    make(chan ErrEvt, executor.graphSize),
 		stepDone:        stepDone,
+		ctx:             ctx,
+		cancel:          cancel,
 	}
 }
 
-func (e *ExecutionContext) fail(stepID string, err error) {
-	e.errorChannel <- ErrEvt{StepID: stepID, Err: err}
+// failNonLeaf signals a non-leaf node failure - triggers immediate termination
+func (e *ExecutionContext) failNonLeaf(stepID string, err error) {
+	select {
+	case e.errorChannel <- ErrEvt{StepID: stepID, Err: err}:
+		e.cancel() // Cancel context to signal early termination
+	default:
+		// Error already sent, just cancel
+		e.cancel()
+	}
+	close(e.stepDone[stepID])
+}
+
+// failLeaf captures a leaf node error in the Errors map
+func (e *ExecutionContext) failLeaf(stepID string, err error) {
+	e.errorsLock.Lock()
+	e.context.Errors[stepID] = err
+	e.errorsLock.Unlock()
+	log.Printf("[step:%s] leaf node failed (captured in Errors): %v", stepID, err)
 	close(e.stepDone[stepID])
 }
 
@@ -59,10 +84,28 @@ func (e *ExecutionContext) fail(stepID string, err error) {
 func (e *ExecutionContext) initExecution(step *Node[*Action]) {
 	defer e.wg.Done()
 
+	// Check for early termination (non-leaf failure occurred)
+	select {
+	case <-e.ctx.Done():
+		log.Printf("[step:%s] skipped: execution cancelled", step.ID)
+		close(e.stepDone[step.ID])
+		return
+	default:
+	}
+
 	for _, dep := range e.predecessorsMap[step.ID] {
 		// Block until the dependency finishes. Closing (not sending) means every
 		// goroutine waiting on the same dep unblocks simultaneously.
 		<-e.stepDone[dep]
+
+		// Check for cancellation mid-wait
+		select {
+		case <-e.ctx.Done():
+			log.Printf("[step:%s] skipped: execution cancelled during dependency wait", step.ID)
+			close(e.stepDone[step.ID])
+			return
+		default:
+		}
 
 		// Presence in Results means success; absence means the dep failed.
 		e.resultsLock.RLock()
@@ -71,7 +114,12 @@ func (e *ExecutionContext) initExecution(step *Node[*Action]) {
 
 		if !depSucceeded {
 			log.Printf("[step:%s] skipped: dependency %s failed", step.ID, dep)
-			e.fail(step.ID, fmt.Errorf("dependency %s failed", dep))
+			// Check if this is a leaf node - if so, capture error; otherwise propagate
+			if step.IsLeaf() {
+				e.failLeaf(step.ID, fmt.Errorf("dependency %s failed", dep))
+			} else {
+				e.failNonLeaf(step.ID, fmt.Errorf("dependency %s failed", dep))
+			}
 			return
 		}
 	}
@@ -80,7 +128,12 @@ func (e *ExecutionContext) initExecution(step *Node[*Action]) {
 	result, err := step.Data.Execute(e)
 	if err != nil {
 		log.Printf("[step:%s] failed: %v", step.ID, err)
-		e.fail(step.ID, err)
+		// Distinguish leaf vs non-leaf failures
+		if step.IsLeaf() {
+			e.failLeaf(step.ID, err)
+		} else {
+			e.failNonLeaf(step.ID, err)
+		}
 		return
 	}
 
@@ -89,6 +142,13 @@ func (e *ExecutionContext) initExecution(step *Node[*Action]) {
 	e.context.Results[step.ID] = result
 	e.resultsLock.Unlock()
 	close(e.stepDone[step.ID])
+
+	// Don't spawn dependents if execution was cancelled
+	select {
+	case <-e.ctx.Done():
+		return
+	default:
+	}
 
 	for _, dep := range e.successorsMap[step.ID] {
 		if _, alreadyQueued := e.waitList.LoadOrStore(dep, true); !alreadyQueued {

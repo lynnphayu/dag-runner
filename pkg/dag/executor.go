@@ -1,6 +1,7 @@
 package dag
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -87,8 +88,21 @@ func NewRunner(db Persist, http Http, dag *Graph[*Action, any]) *Runner {
 	}
 }
 
-// Execute runs the DAG with parallel execution of steps
-func (e *Runner) Execute(input map[string]interface{}) (map[string]interface{}, error) {
+// ExecutionResult contains the results and any leaf node errors
+type ExecutionResult struct {
+	Results map[string]interface{}
+	Errors  map[string]error
+}
+
+// Execute runs the DAG with parallel execution of steps.
+// If a non-leaf node fails, returns immediately with the error.
+// If a leaf node fails, the error is captured in ExecutionResult.Errors.
+func (e *Runner) Execute(input map[string]interface{}) (*ExecutionResult, error) {
+	return e.ExecuteWithContext(context.Background(), input)
+}
+
+// ExecuteWithContext runs the DAG with support for external cancellation.
+func (e *Runner) ExecuteWithContext(ctx context.Context, input map[string]interface{}) (*ExecutionResult, error) {
 	log.Printf("[dag] starting execution with input: %v", input)
 	execution := NewExecutionContext(input, e)
 
@@ -98,16 +112,34 @@ func (e *Runner) Execute(input map[string]interface{}) (map[string]interface{}, 
 		go execution.initExecution(step)
 	}
 
-	execution.wg.Wait()
+	// Wait for either completion or early termination
+	done := make(chan struct{})
+	go func() {
+		execution.wg.Wait()
+		close(done)
+	}()
 
-	// Check for any errors
 	select {
-	case err := <-execution.errorChannel:
-		log.Printf("[dag] execution failed at step %s: %v", err.StepID, err.Err)
-		return nil, fmt.Errorf("step %s failed: %w", err.StepID, err.Err)
-	default:
-		log.Printf("[dag] execution completed successfully")
+	case <-done:
+		// Normal completion
+	case errEvt := <-execution.errorChannel:
+		// Non-leaf node failed - return immediately
+		execution.cancel() // Ensure everything shuts down
+		execution.wg.Wait() // Wait for cleanup
+		log.Printf("[dag] execution failed at step %s: %v", errEvt.StepID, errEvt.Err)
+		return nil, fmt.Errorf("step %s failed: %w", errEvt.StepID, errEvt.Err)
+	case <-ctx.Done():
+		// External cancellation
+		execution.cancel()
+		execution.wg.Wait()
+		return nil, fmt.Errorf("execution cancelled: %w", ctx.Err())
 	}
 
-	return execution.context.Results, nil
+	log.Printf("[dag] execution completed - results: %d, errors: %d",
+		len(execution.context.Results), len(execution.context.Errors))
+
+	return &ExecutionResult{
+		Results: execution.context.Results,
+		Errors:  execution.context.Errors,
+	}, nil
 }

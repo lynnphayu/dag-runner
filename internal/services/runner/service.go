@@ -485,7 +485,7 @@ func (r *RunnerService) RegisterFlowRoute(graphId string, router *mux.Router) er
 		}, &dag.Context{}).(map[string]interface{})
 
 		w.Header().Set("Content-Type", "application/json")
-		resultMap, err := executor.Execute(resolvedInput)
+		executionResult, err := executor.Execute(resolvedInput)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(&map[string]interface{}{
@@ -493,7 +493,13 @@ func (r *RunnerService) RegisterFlowRoute(graphId string, router *mux.Router) er
 			})
 			return
 		}
-		result := dag.ResolveValues(adapter.Meta.Response, resultMap, &dag.Context{Results: resultMap})
+		// Log leaf node errors if any
+		if len(executionResult.Errors) > 0 {
+			for nodeID, nodeErr := range executionResult.Errors {
+				log.Printf("[handler] leaf node %s failed: %v", nodeID, nodeErr)
+			}
+		}
+		result := dag.ResolveValues(adapter.Meta.Response, executionResult.Results, &dag.Context{Results: executionResult.Results, Errors: executionResult.Errors})
 		if result != nil {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(result)
