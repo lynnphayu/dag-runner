@@ -3,7 +3,7 @@ package manager
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -32,7 +32,8 @@ type DAGVersionInfo struct {
 func NewManagerService(mongoURI string) *ManagerService {
 	db, err := mongodb.NewMongoDB(mongoURI, "dag_manager")
 	if err != nil {
-		log.Fatalf("failed to create mongodb connection: %v", err)
+		slog.Error("failed to initialize manager mongodb connection", "error", err)
+		panic(fmt.Sprintf("failed to initialize manager mongodb connection: %v", err))
 	}
 	return &ManagerService{
 		db: db,
@@ -616,8 +617,14 @@ func (m *ManagerService) UpdateDAG(g *dag.Graph[*dag.Action, any]) (interface{},
 	// If published, create new version entry (bump version, reset subversion)
 	newData["version"] = currentVersion + 1
 	newData["subversion"] = 1
-	log.Println("newData", newData)
-	log.Println("verions", currentVersion, currentSubversion)
+	slog.Debug(
+		"creating new published graph version",
+		"graph_id", g.ID,
+		"previous_version", currentVersion,
+		"previous_subversion", currentSubversion,
+		"new_version", newData["version"],
+		"new_subversion", newData["subversion"],
+	)
 	if _, err := m.db.Create(graphsCollection, newData); err != nil {
 		return nil, fmt.Errorf("failed to create new published version: %w", err)
 	}

@@ -238,11 +238,14 @@ func (c *Condition) Execute(execCtx *ExecutionContext, action *Action) (interfac
 		c.Operator,
 		&execCtx.context,
 	)
+
+	next := c.Else
 	if result {
-		execCtx.successorsMap[action.node.ID] = c.If
-	} else {
-		execCtx.successorsMap[action.node.ID] = c.Else
+		next = c.If
 	}
+
+	execCtx.setSuccessors(action.node.ID, next)
+
 	return result, nil
 }
 

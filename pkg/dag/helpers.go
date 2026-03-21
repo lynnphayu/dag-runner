@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"reflect"
 	"strconv"
 	"strings"
@@ -89,10 +89,18 @@ func matchJoinConditions(left, right map[string]interface{}, on map[string]strin
 		if reflect.DeepEqual(leftVal, rightVal) {
 			continue
 		}
-		// Fallback: compare as strings to handle type mismatches (e.g. [16]byte vs string)
 		leftStr := fmt.Sprintf("%v", leftVal)
 		rightStr := fmt.Sprintf("%v", rightVal)
-		log.Printf("[join] comparing %s(%T)=%q vs %s(%T)=%q → match=%v", leftKey, leftVal, leftStr, rightKey, rightVal, rightStr, leftStr == rightStr)
+		slog.Debug(
+			"join key comparison",
+			"left_key", leftKey,
+			"left_type", fmt.Sprintf("%T", leftVal),
+			"left_value", leftStr,
+			"right_key", rightKey,
+			"right_type", fmt.Sprintf("%T", rightVal),
+			"right_value", rightStr,
+			"matched", leftStr == rightStr,
+		)
 		if leftStr != rightStr {
 			return false
 		}

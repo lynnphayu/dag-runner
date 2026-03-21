@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -38,15 +38,18 @@ func NewRunnerService(
 ) *RunnerService {
 	postgresdb, err := postgres.NewPostgres(postgresURI)
 	if err != nil {
-		log.Fatalf("failed to create postgres: %v", err)
+		slog.Error("failed to create postgres client", "error", err)
+		panic(err)
 	}
 	httpClient, err := httpClient.NewHttp()
 	if err != nil {
-		log.Fatalf("failed to create http: %v", err)
+		slog.Error("failed to create http client", "error", err)
+		panic(err)
 	}
 	mongodb, err := mongodb.NewMongoDB(mongoURI, "dag_manager")
 	if err != nil {
-		log.Fatalf("failed to create mongodb connection: %v", err)
+		slog.Error("failed to create mongodb connection", "error", err)
+		panic(err)
 	}
 	return &RunnerService{
 		postgresdb: postgresdb,
@@ -148,7 +151,6 @@ func (r *RunnerService) GetHTTPHandlerAdapter(
 		return nil, nil, err
 	}
 	var adapter dag.Adapter[dag.HttpAdapter]
-	foundAdapter := false
 	for _, doc := range adapterDocs {
 		ab, err := bson.Marshal(doc)
 		if err != nil {
@@ -162,28 +164,33 @@ func (r *RunnerService) GetHTTPHandlerAdapter(
 		if err != nil {
 			return nil, nil, err
 		}
-		var candidate dag.Adapter[dag.HttpAdapter]
-		if err := json.Unmarshal(jb, &candidate); err != nil {
+		if err := json.Unmarshal(jb, &adapter); err != nil {
 			continue
 		}
-		if candidate.Type != dag.Adapter_Http {
-			continue
+		if adapter.Type == dag.Adapter_Http {
+			break
 		}
-		adapter = candidate
-		foundAdapter = true
-		break
 	}
-	if !foundAdapter {
+	if adapter.Type != dag.Adapter_Http {
 		// Fall back: find the latest http_adapter for this graph regardless of version.
 		// This handles adapters saved via POST /v1/adapters that may have a different version.
-		log.Printf("http adapter not found at version %d.%d for graph %s, falling back to latest", bestV, bestSV, graphId)
+		slog.Warn("http adapter not found for published version, falling back to latest",
+			"graph_id", graphId,
+			"version", bestV,
+			"subversion", bestSV,
+		)
 		fallbackDoc, fbErr := r.mongodb.FindLatestByVersion(constants.ADAPTER_COLLECTION, map[string]interface{}{
 			"graphId": graphId,
 			"type":    string(dag.Adapter_Http),
 		})
 		if fbErr != nil || fallbackDoc == nil {
 			err := fmt.Errorf("http adapter not found for graph %s version %d.%d", graphId, bestV, bestSV)
-			log.Println(err.Error())
+			slog.Error("http adapter lookup failed",
+				"graph_id", graphId,
+				"version", bestV,
+				"subversion", bestSV,
+				"error", err,
+			)
 			return nil, nil, err
 		}
 		ab, err := bson.Marshal(fallbackDoc)
@@ -201,12 +208,6 @@ func (r *RunnerService) GetHTTPHandlerAdapter(
 		if err := json.Unmarshal(jb, &adapter); err != nil {
 			return nil, nil, fmt.Errorf("failed to unmarshal fallback adapter: %w", err)
 		}
-		foundAdapter = true
-	}
-	if !foundAdapter {
-		err := fmt.Errorf("http adapter not found for graph %s version %d.%d", graphId, bestV, bestSV)
-		log.Println(err.Error())
-		return nil, nil, err
 	}
 	runner := dag.NewRunner(r.postgresdb, r.httpClient, &graph)
 	return runner, &adapter, nil
@@ -215,7 +216,10 @@ func (r *RunnerService) GetHTTPHandlerAdapter(
 func (r *RunnerService) RegisterFlowRoute(graphId string, router *mux.Router) error {
 	executor, adapter, err := r.GetHTTPHandlerAdapter(graphId)
 	if err != nil {
-		log.Printf("failed to get http handler preference: %v", err)
+		slog.Error("failed to get http handler adapter",
+			"graph_id", graphId,
+			"error", err,
+		)
 		return err
 	}
 
@@ -227,14 +231,20 @@ func (r *RunnerService) RegisterFlowRoute(graphId string, router *mux.Router) er
 				if set, err := jwk.Parse(b); err == nil {
 					jwks = set
 				} else {
-					log.Printf("failed to parse inline JWKS: %v", err)
+					slog.Warn("failed to parse inline JWKS",
+						"graph_id", graphId,
+						"error", err,
+					)
 				}
 			}
 		} else if rawStr, ok := adapter.Meta.Auth["jwks"].(string); ok && rawStr != "" {
 			if set, err := jwk.Parse([]byte(rawStr)); err == nil {
 				jwks = set
 			} else {
-				log.Printf("failed to parse inline JWKS string: %v", err)
+				slog.Warn("failed to parse inline JWKS string",
+					"graph_id", graphId,
+					"error", err,
+				)
 			}
 		} else if url, ok := adapter.Meta.Auth["jwksUrl"].(string); ok && url != "" {
 			// If jwksUrl looks like JSON, parse it directly; otherwise fetch from URL
@@ -242,7 +252,10 @@ func (r *RunnerService) RegisterFlowRoute(graphId string, router *mux.Router) er
 				if set, err := jwk.Parse([]byte(url)); err == nil {
 					jwks = set
 				} else {
-					log.Printf("failed to parse JWKS from jwksUrl JSON: %v", err)
+					slog.Warn("failed to parse JWKS from jwksUrl JSON",
+						"graph_id", graphId,
+						"error", err,
+					)
 				}
 			} else {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -250,7 +263,11 @@ func (r *RunnerService) RegisterFlowRoute(graphId string, router *mux.Router) er
 				if set, err := jwk.Fetch(ctx, url); err == nil {
 					jwks = set
 				} else {
-					log.Printf("failed to fetch JWKS: %v", err)
+					slog.Warn("failed to fetch JWKS",
+						"graph_id", graphId,
+						"jwks_url", url,
+						"error", err,
+					)
 				}
 			}
 		}
@@ -485,7 +502,7 @@ func (r *RunnerService) RegisterFlowRoute(graphId string, router *mux.Router) er
 		}, &dag.Context{}).(map[string]interface{})
 
 		w.Header().Set("Content-Type", "application/json")
-		resultMap, err := executor.Execute(resolvedInput)
+		executionResult, err := executor.ExecuteForResponse(r.Context(), resolvedInput, adapter.Meta.Response)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(&map[string]interface{}{
@@ -493,7 +510,16 @@ func (r *RunnerService) RegisterFlowRoute(graphId string, router *mux.Router) er
 			})
 			return
 		}
-		result := dag.ResolveValues(adapter.Meta.Response, resultMap, &dag.Context{Results: resultMap})
+		// Log captured non-terminal node errors if any
+		if len(executionResult.Errors) > 0 {
+			for nodeID, nodeErr := range executionResult.Errors {
+				slog.Warn("non-terminal node failed during handler execution",
+					"node_id", nodeID,
+					"error", nodeErr,
+				)
+			}
+		}
+		result := dag.ResolveValues(adapter.Meta.Response, executionResult.Results, &dag.Context{Results: executionResult.Results, Errors: executionResult.Errors})
 		if result != nil {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(result)
@@ -558,7 +584,7 @@ func (r *RunnerService) RegisterAllPublishedFlowRoutes(router *mux.Router) error
 		bestByGraph[graphID] = doc
 	}
 
-	log.Printf("bestByGraph: %v", bestByGraph)
+	slog.Debug("resolved latest published graphs for route registration", "graph_count", len(bestByGraph))
 	var errs []string
 	for id := range bestByGraph {
 		if err := r.RegisterFlowRoute(id, router); err != nil {
