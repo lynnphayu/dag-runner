@@ -1,8 +1,7 @@
 package main
 
 import (
-	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,18 +9,25 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
 	http_service "github.com/lynnphayu/dag-runner/api/v1/http"
+	"github.com/lynnphayu/dag-runner/internal/logging"
 	"github.com/lynnphayu/dag-runner/internal/services/manager"
 	"github.com/lynnphayu/dag-runner/internal/services/runner"
 	"github.com/rs/cors"
 )
 
 func main() {
-	root, error := os.Getwd()
-	if error != nil {
-		panic(fmt.Sprintf("Failed to get working directory: %s", error))
+	logger := logging.NewLogger("runner-web")
+	slog.SetDefault(logger)
+
+	root, err := os.Getwd()
+	if err != nil {
+		logger.Error("failed to get working directory", "error", err)
+		os.Exit(1)
 	}
 	envPath := filepath.Join(root, ".env")
-	godotenv.Load(envPath)
+	if err := godotenv.Load(envPath); err != nil {
+		logger.Warn("failed to load environment file", "path", envPath, "error", err)
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -30,11 +36,13 @@ func main() {
 
 	postgresURI := os.Getenv("DATABASE_URL")
 	if postgresURI == "" {
-		log.Fatalf("missing DATABASE_URL environment variable")
+		logger.Error("missing required environment variable", "name", "DATABASE_URL")
+		os.Exit(1)
 	}
 	mongoURI := os.Getenv("MONGO_URI")
 	if mongoURI == "" {
-		log.Fatalf("missing MONGO_URI environment variable")
+		logger.Error("missing required environment variable", "name", "MONGO_URI")
+		os.Exit(1)
 	}
 
 	runnerService := runner.NewRunnerService(postgresURI, mongoURI)
@@ -48,8 +56,13 @@ func main() {
 	managerHandler.RegisterRoutes(router)
 
 	if err := runnerService.RegisterAllPublishedFlowRoutes(router); err != nil {
-		log.Fatalf("failed to pre-register published DAG routes: %v", err)
+		logger.Error("failed to pre-register published DAG routes", "error", err)
+		os.Exit(1)
 	}
+
+	router.Use(http_service.RequestIDMiddleware(logger))
+	router.Use(http_service.RecoveryMiddleware(logger))
+	router.Use(http_service.AccessLogMiddleware(logger))
 
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -74,6 +87,9 @@ func main() {
 	// Wrap router with CORS middleware
 	handler := c.Handler(router)
 
-	log.Printf("Server is running on port %s", port)
-	log.Fatal(http.ListenAndServe(":"+port, handler))
+	logger.Info("starting HTTP server", "port", port)
+	if err := http.ListenAndServe(":"+port, handler); err != nil {
+		logger.Error("http server stopped", "error", err)
+		os.Exit(1)
+	}
 }

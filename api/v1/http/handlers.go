@@ -1,7 +1,7 @@
 package http_endpoint
 
 import (
-	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -12,6 +12,7 @@ import (
 type RunnerHandler struct {
 	runnerService  *runner.RunnerService
 	managerService *manager.ManagerService
+	logger         *slog.Logger
 }
 
 func NewRunnerHandler(runnerService *runner.RunnerService, managerService *manager.ManagerService) *RunnerHandler {
@@ -19,19 +20,18 @@ func NewRunnerHandler(runnerService *runner.RunnerService, managerService *manag
 	return &RunnerHandler{
 		runnerService:  runnerService,
 		managerService: managerService,
+		logger:         slog.Default().With("component", "runner_handler"),
 	}
 }
 
 func (h *RunnerHandler) GetTableNames(w http.ResponseWriter, r *http.Request) {
-
 	result, err := h.runnerService.GetTableNames()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeInternalError(w, r, h.logger, err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(&map[string]interface{}{
+	writeOK(w, map[string]interface{}{
 		"data": result,
 	})
 }
@@ -42,12 +42,11 @@ func (h *RunnerHandler) GetColumns(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.runnerService.GetColumns(tableName)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeInternalError(w, r, h.logger.With("table_name", tableName), err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(&map[string]interface{}{
+	writeOK(w, map[string]interface{}{
 		"data": result,
 	})
 }
@@ -56,12 +55,20 @@ func (h *RunnerHandler) registerFlowRouteHandler(router *mux.Router) http.Handle
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		graphId := vars["id"]
-		err := h.runnerService.RegisterFlowRoute(graphId, router)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+
+		if err := h.runnerService.RegisterFlowRoute(graphId, router); err != nil {
+			writeInternalError(w, r, h.logger.With("graph_id", graphId), err)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+
+		h.logger.Info(
+			"flow route registered",
+			"graph_id", graphId,
+			"method", r.Method,
+			"path", r.URL.Path,
+		)
+
+		writeNoContent(w)
 	}
 }
 
