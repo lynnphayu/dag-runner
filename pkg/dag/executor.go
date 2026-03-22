@@ -29,31 +29,36 @@ type ParsedResponse struct {
 
 type Http interface {
 	Post(
+		ctx context.Context,
 		url string,
 		query map[string]interface{},
 		body map[string]interface{},
 		headers map[string]string,
 	) (*ParsedResponse, error)
 	Get(
+		ctx context.Context,
 		url string,
 		query map[string]interface{},
 		headers map[string]string,
 	) (*ParsedResponse, error)
 	Put(
+		ctx context.Context,
 		url string,
-		body map[string]interface{},
 		query map[string]interface{},
+		body map[string]interface{},
 		headers map[string]string,
 	) (*ParsedResponse, error)
 	Delete(
+		ctx context.Context,
 		url string,
 		query map[string]interface{},
 		headers map[string]string,
 	) (*ParsedResponse, error)
 	Patch(
+		ctx context.Context,
 		url string,
-		body map[string]interface{},
 		query map[string]interface{},
+		body map[string]interface{},
 		headers map[string]string,
 	) (*ParsedResponse, error)
 }

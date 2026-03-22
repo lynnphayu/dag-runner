@@ -268,15 +268,15 @@ func (h *HTTP) Execute(execCtx *ExecutionContext, action *Action) (interface{}, 
 	url := ResolveV2[string](h.URL, nil, &execCtx.context)
 	switch h.Method {
 	case GET:
-		return (*execCtx.executor.httpClient).Get(url, query, headers)
+		return (*execCtx.executor.httpClient).Get(execCtx.ctx, url, query, headers)
 	case POST:
-		return (*execCtx.executor.httpClient).Post(url, query, body, headers)
+		return (*execCtx.executor.httpClient).Post(execCtx.ctx, url, query, body, headers)
 	case PUT:
-		return (*execCtx.executor.httpClient).Put(url, body, query, headers)
+		return (*execCtx.executor.httpClient).Put(execCtx.ctx, url, query, body, headers)
 	case DELETE:
-		return (*execCtx.executor.httpClient).Delete(url, query, headers)
+		return (*execCtx.executor.httpClient).Delete(execCtx.ctx, url, query, headers)
 	case PATCH:
-		return (*execCtx.executor.httpClient).Patch(url, body, query, headers)
+		return (*execCtx.executor.httpClient).Patch(execCtx.ctx, url, query, body, headers)
 	default:
 		return nil, fmt.Errorf("unsupported HTTP method: %s", h.Method)
 	}
