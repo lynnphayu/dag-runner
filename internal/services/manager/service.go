@@ -125,19 +125,44 @@ func validateHTTPAuth(meta dag.HttpAdapter) error {
 		}
 		return nil
 	case dag.Auth_Bearer:
-		// Require either jwks or jwksUrl
+		// Check for HMAC secret (supports multiple option names for compatibility)
+		hasSecret := false
+		if v, ok := meta.Auth["secret"].(string); ok && v != "" {
+			hasSecret = true
+		}
+		if v, ok := meta.Auth["hmacSecret"].(string); ok && v != "" {
+			hasSecret = true
+		}
+		if v, ok := meta.Auth["sharedSecret"].(string); ok && v != "" {
+			hasSecret = true
+		}
+
+		// Check for JWKS configuration
+		hasJwks := false
 		if raw := meta.Auth["jwks"]; raw != nil {
-			// accept map or string; basic presence check is enough here
-			return nil
+			hasJwks = true
 		}
 		if url, ok := meta.Auth["jwksUrl"].(string); ok && strings.TrimSpace(url) != "" {
-			return nil
+			hasJwks = true
 		}
-		return fmt.Errorf("bearer auth requires 'jwks' or 'jwksUrl'")
+
+		if !hasSecret && !hasJwks {
+			return fmt.Errorf("bearer auth requires 'secret', 'hmacSecret', 'sharedSecret', 'jwks', or 'jwksUrl'")
+		}
+
+		// Validate alg if provided with HMAC secret
+		if hasSecret {
+			if alg, ok := meta.Auth["alg"].(string); ok && alg != "" {
+				validAlgs := map[string]bool{"HS256": true, "HS384": true, "HS512": true}
+				if !validAlgs[alg] {
+					return fmt.Errorf("bearer auth HMAC alg must be HS256, HS384, or HS512")
+				}
+			}
+		}
+
+		return nil
 	case dag.Auth_ApiKey:
 		name, nok := meta.Auth["name"].(string)
-		val, vok := meta.Auth["value"].(string)
-		key, kok := meta.Auth["key"].(string)
 		in := "header"
 		if v, ok := meta.Auth["in"].(string); ok && v != "" {
 			in = strings.ToLower(v)
@@ -148,9 +173,7 @@ func validateHTTPAuth(meta dag.HttpAdapter) error {
 		if !nok || strings.TrimSpace(name) == "" {
 			return fmt.Errorf("apiKey auth requires 'name'")
 		}
-		if (!vok || strings.TrimSpace(val) == "") && (!kok || strings.TrimSpace(key) == "") {
-			return fmt.Errorf("apiKey auth requires 'value' or 'key'")
-		}
+		// API key can be presence-only (no expected value), or have expected value/key
 		return nil
 	default:
 		return fmt.Errorf("unsupported auth type: %s", meta.AuthType)
