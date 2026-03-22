@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/lynnphayu/dag-runner/internal/constants"
 	mongodb "github.com/lynnphayu/dag-runner/internal/repositories/mongodb"
 	"github.com/lynnphayu/dag-runner/pkg/dag"
+	"github.com/lynnphayu/dag-runner/pkg/dag/validation"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -113,96 +113,10 @@ func (m *ManagerService) ListAdapters(userID, graphID string) ([]dag.Adapter[any
 	return adapters, nil
 }
 
-func validateHTTPAuth(meta dag.HttpAdapter) error {
-	switch meta.AuthType {
-	case dag.Auth_None:
-		return nil
-	case dag.Auth_Basic:
-		username, uok := meta.Auth["username"].(string)
-		password, pok := meta.Auth["password"].(string)
-		if !uok || !pok || strings.TrimSpace(username) == "" || strings.TrimSpace(password) == "" {
-			return fmt.Errorf("basic auth requires username and password")
-		}
-		return nil
-	case dag.Auth_Bearer:
-		// Check for HMAC secret (supports multiple option names for compatibility)
-		hasSecret := false
-		if v, ok := meta.Auth["secret"].(string); ok && v != "" {
-			hasSecret = true
-		}
-		if v, ok := meta.Auth["hmacSecret"].(string); ok && v != "" {
-			hasSecret = true
-		}
-		if v, ok := meta.Auth["sharedSecret"].(string); ok && v != "" {
-			hasSecret = true
-		}
-
-		// Check for JWKS configuration
-		hasJwks := false
-		if raw := meta.Auth["jwks"]; raw != nil {
-			hasJwks = true
-		}
-		if url, ok := meta.Auth["jwksUrl"].(string); ok && strings.TrimSpace(url) != "" {
-			hasJwks = true
-		}
-
-		if !hasSecret && !hasJwks {
-			return fmt.Errorf("bearer auth requires 'secret', 'hmacSecret', 'sharedSecret', 'jwks', or 'jwksUrl'")
-		}
-
-		// Validate alg if provided with HMAC secret
-		if hasSecret {
-			if alg, ok := meta.Auth["alg"].(string); ok && alg != "" {
-				validAlgs := map[string]bool{"HS256": true, "HS384": true, "HS512": true}
-				if !validAlgs[alg] {
-					return fmt.Errorf("bearer auth HMAC alg must be HS256, HS384, or HS512")
-				}
-			}
-		}
-
-		return nil
-	case dag.Auth_ApiKey:
-		name, nok := meta.Auth["name"].(string)
-		in := "header"
-		if v, ok := meta.Auth["in"].(string); ok && v != "" {
-			in = strings.ToLower(v)
-		}
-		if in != "header" && in != "query" && in != "cookie" {
-			return fmt.Errorf("apiKey auth 'in' must be header, query, or cookie")
-		}
-		if !nok || strings.TrimSpace(name) == "" {
-			return fmt.Errorf("apiKey auth requires 'name'")
-		}
-		// API key can be presence-only (no expected value), or have expected value/key
-		return nil
-	default:
-		return fmt.Errorf("unsupported auth type: %s", meta.AuthType)
-	}
-}
-
-func validateHTTPAdapter(adapter *dag.Adapter[any]) error {
-	meta, ok := any(adapter.Meta).(dag.HttpAdapter)
-	if !ok {
-		return fmt.Errorf("invalid http adapter meta")
-	}
-	if strings.TrimSpace(meta.Path) == "" {
-		return fmt.Errorf("adapter path is required")
-	}
-	if strings.TrimSpace(string(meta.Method)) == "" {
-		return fmt.Errorf("adapter method is required")
-	}
-	if len(meta.Response) == 0 {
-		return fmt.Errorf("adapter response selector is required")
-	}
-	return validateHTTPAuth(meta)
-}
-
 func (m *ManagerService) SaveAdapter(adapter *dag.Adapter[any]) error {
 	// Validate adapter before save
-	if adapter.Type == dag.Adapter_Http {
-		if err := validateHTTPAdapter(adapter); err != nil {
-			return err
-		}
+	if err := validation.ValidateAdapter(adapter); err != nil {
+		return fmt.Errorf("adapter validation failed: %w", err)
 	}
 
 	collection := constants.ADAPTER_COLLECTION
@@ -244,6 +158,11 @@ func (m *ManagerService) SaveAdapter(adapter *dag.Adapter[any]) error {
 
 // SaveDAG stores a DAG definition in MongoDB
 func (m *ManagerService) SaveDAG(g *dag.Graph[*dag.Action, any]) error {
+	// Validate DAG before save
+	if err := validation.ValidateDAG(g); err != nil {
+		return fmt.Errorf("DAG validation failed: %w", err)
+	}
+
 	graphsCollection := constants.GRAPH_COLLECTION
 	nodesCollection := constants.NODE_COLLECTION
 	uuid, err := uuid.NewRandom()
@@ -560,6 +479,11 @@ func (m *ManagerService) DeleteDAG(id string) error {
 
 // UpdateDAG updates an existing DAG definition
 func (m *ManagerService) UpdateDAG(g *dag.Graph[*dag.Action, any]) (interface{}, error) {
+	// Validate DAG before update
+	if err := validation.ValidateDAG(g); err != nil {
+		return nil, fmt.Errorf("DAG validation failed: %w", err)
+	}
+
 	graphsCollection := constants.GRAPH_COLLECTION
 	nodesCollection := constants.NODE_COLLECTION
 	currentDoc, err := m.db.FindLatestByVersion(graphsCollection, map[string]interface{}{"id": g.ID})
@@ -700,10 +624,38 @@ func (m *ManagerService) PublishDAG(id string) (string, int, error) {
 	if currentDoc == nil {
 		return "", 0, fmt.Errorf("DAG not found: %s", id)
 	}
-	currentVersion, _ := dag.ExtractVersionSubversion(currentDoc)
+	currentVersion, currentSubversion := dag.ExtractVersionSubversion(currentDoc)
 	if currentDoc["status"] == string(dag.Status_Published) {
 		return currentDoc["id"].(string), currentVersion, fmt.Errorf("DAG already published")
 	}
+
+	// Load the full graph with nodes for validation
+	graph, err := m.GetDAG(id)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to load DAG for validation: %w", err)
+	}
+
+	// Load adapters for this graph version
+	adapterDocs, err := m.db.Retrieve(constants.ADAPTER_COLLECTION, []string{}, map[string]interface{}{
+		"graphId":    id,
+		"version":    currentVersion,
+		"subversion": currentSubversion,
+	})
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to retrieve adapters for validation: %w", err)
+	}
+
+	// Validate response selectors in adapters
+	for _, doc := range adapterDocs {
+		responseRaw, ok := doc["response"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if err := validation.ValidateResponseReferences(responseRaw, graph); err != nil {
+			return "", 0, fmt.Errorf("adapter response validation failed: %w", err)
+		}
+	}
+
 	// Update the latest entry in place to set status=published
 	filter := map[string]interface{}{
 		"_id": currentDoc["_id"],

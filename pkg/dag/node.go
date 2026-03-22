@@ -238,6 +238,9 @@ func (g *Graph[T, A]) topologicalSort() ([]string, error) {
 
 // ValidateDAG validates that the graph is a proper DAG
 func (g *Graph[T, A]) ValidateDAG() error {
+	// Rebuild dependents from dependencies since dependents are not serialized
+	g.rebuildDependents()
+
 	// Check for cycles using topological sort
 	_, err := g.topologicalSort()
 	if err != nil {
@@ -286,6 +289,21 @@ func (g *Graph[T, A]) ValidateDAG() error {
 	}
 
 	return nil
+}
+
+func (g *Graph[T, A]) rebuildDependents() {
+	// Clear all dependents first
+	for _, node := range g.Nodes {
+		node.Dependents = make([]string, 0)
+	}
+	// Rebuild from dependencies
+	for _, node := range g.Nodes {
+		for _, depID := range node.Dependencies {
+			if depNode, exists := g.Nodes[depID]; exists {
+				depNode.Dependents = addUnique(depNode.Dependents, node.ID)
+			}
+		}
+	}
 }
 
 func (g *Graph[T, A]) NodesDict() map[string]*Node[T] {

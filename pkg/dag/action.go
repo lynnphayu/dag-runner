@@ -3,6 +3,8 @@ package dag
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strings"
 )
 
 type ActionInterface interface {
@@ -65,6 +67,9 @@ func (q *Query) Execute(execCtx *ExecutionContext, action *Action) (interface{},
 }
 
 func (q *Query) Validate(execCtx *ExecutionContext, action *Action) error {
+	if strings.TrimSpace(q.Table) == "" {
+		return fmt.Errorf("query action requires a table name")
+	}
 	return nil
 }
 
@@ -79,6 +84,12 @@ func (i *Insert) Execute(execCtx *ExecutionContext, action *Action) (interface{}
 }
 
 func (i *Insert) Validate(execCtx *ExecutionContext, action *Action) error {
+	if strings.TrimSpace(i.Table) == "" {
+		return fmt.Errorf("insert action requires a table name")
+	}
+	if i.Map == nil || len(i.Map) == 0 {
+		return fmt.Errorf("insert action requires a map with values to insert")
+	}
 	return nil
 }
 
@@ -95,6 +106,15 @@ func (u *Update) Execute(execCtx *ExecutionContext, action *Action) (interface{}
 }
 
 func (u *Update) Validate(execCtx *ExecutionContext, action *Action) error {
+	if strings.TrimSpace(u.Table) == "" {
+		return fmt.Errorf("update action requires a table name")
+	}
+	if u.Set == nil || len(u.Set) == 0 {
+		return fmt.Errorf("update action requires a set clause")
+	}
+	if u.Where == nil || len(u.Where) == 0 {
+		return fmt.Errorf("update action requires a where clause")
+	}
 	return nil
 }
 
@@ -109,6 +129,12 @@ func (d *Delete) Execute(execCtx *ExecutionContext, action *Action) (interface{}
 }
 
 func (d *Delete) Validate(execCtx *ExecutionContext, action *Action) error {
+	if strings.TrimSpace(d.Table) == "" {
+		return fmt.Errorf("delete action requires a table name")
+	}
+	if d.Where == nil || len(d.Where) == 0 {
+		return fmt.Errorf("delete action requires a where clause")
+	}
 	return nil
 }
 
@@ -155,15 +181,26 @@ func (j *Join) Execute(execCtx *ExecutionContext, action *Action) (interface{}, 
 }
 
 func (j *Join) Validate(execCtx *ExecutionContext, action *Action) error {
-	dependencies := action.node.Dependencies
-	if len(dependencies) != 2 {
-		return fmt.Errorf("join action requires exactly two dependent steps")
+	if action.node != nil {
+		dependencies := action.node.Dependencies
+		if len(dependencies) != 2 {
+			return fmt.Errorf("join action requires exactly two dependent steps")
+		}
 	}
 	if j.Left == "" {
 		return fmt.Errorf("join action requires left parameter")
 	}
 	if j.Right == "" {
 		return fmt.Errorf("join action requires right parameter")
+	}
+	if j.On == nil || len(j.On) == 0 {
+		return fmt.Errorf("join action requires an 'on' clause with join conditions")
+	}
+	if j.JoinType != "" {
+		validTypes := map[JoinType]bool{InnerJoin: true, LeftJoin: true, RightJoin: true}
+		if !validTypes[j.JoinType] {
+			return fmt.Errorf("invalid join type: %s (must be inner, left, or right)", j.JoinType)
+		}
 	}
 	return nil
 }
@@ -182,8 +219,11 @@ func (f *Filter) Execute(execCtx *ExecutionContext, action *Action) (interface{}
 }
 
 func (f *Filter) Validate(execCtx *ExecutionContext, action *Action) error {
-	if len(action.node.Dependencies) != 1 {
+	if action.node != nil && len(action.node.Dependencies) != 1 {
 		return fmt.Errorf("filter step requires exactly one dependent step")
+	}
+	if f.Filter == nil || len(f.Filter) == 0 {
+		return fmt.Errorf("filter action requires filter conditions")
 	}
 	return nil
 }
@@ -201,6 +241,12 @@ func (m *Map) Execute(execCtx *ExecutionContext, action *Action) (interface{}, e
 }
 
 func (m *Map) Validate(execCtx *ExecutionContext, action *Action) error {
+	if action.node != nil && len(action.node.Dependencies) != 1 {
+		return fmt.Errorf("map step requires exactly one dependent step")
+	}
+	if m.Mapper == nil || len(m.Mapper) == 0 {
+		return fmt.Errorf("map action requires a mapper")
+	}
 	return nil
 }
 
@@ -250,6 +296,19 @@ func (c *Condition) Execute(execCtx *ExecutionContext, action *Action) (interfac
 }
 
 func (c *Condition) Validate(execCtx *ExecutionContext, action *Action) error {
+	if c.Operator == "" {
+		return fmt.Errorf("condition action requires an operator")
+	}
+	validOperators := map[Operator]bool{EQ: true, NE: true, GT: true, GTE: true, LT: true, LTE: true, IN: true, NOTIN: true, AND: true, OR: true}
+	if !validOperators[c.Operator] {
+		return fmt.Errorf("invalid operator: %s", c.Operator)
+	}
+	if c.Left == "" {
+		return fmt.Errorf("condition action requires a left operand")
+	}
+	if c.Right == "" {
+		return fmt.Errorf("condition action requires a right operand")
+	}
 	return nil
 }
 
@@ -283,6 +342,23 @@ func (h *HTTP) Execute(execCtx *ExecutionContext, action *Action) (interface{}, 
 }
 
 func (h *HTTP) Validate(execCtx *ExecutionContext, action *Action) error {
+	if h.Method == "" {
+		return fmt.Errorf("http action requires a method")
+	}
+	validMethods := map[HTTPMethod]bool{GET: true, POST: true, PUT: true, DELETE: true, PATCH: true}
+	if !validMethods[h.Method] {
+		return fmt.Errorf("invalid http method: %s", h.Method)
+	}
+	if strings.TrimSpace(h.URL) == "" {
+		return fmt.Errorf("http action requires a url")
+	}
+	parsedURL, err := url.Parse(h.URL)
+	if err != nil {
+		return fmt.Errorf("invalid url: %w", err)
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return fmt.Errorf("url must use http or https scheme")
+	}
 	return nil
 }
 
