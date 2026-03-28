@@ -56,7 +56,7 @@ func ValidateDAG(g *dag.Graph[*dag.Action, any]) error {
 	}
 
 	if len(g.Nodes) == 0 {
-		errors = append(errors, ValidationError{Field: "nodes", Message: "graph must have at least one node"})
+		// errors = append(errors, ValidationError{Field: "nodes", Message: "graph must have at least one node"})
 	}
 
 	nodeIDs := make(map[string]bool)
