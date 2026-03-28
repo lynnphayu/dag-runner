@@ -39,7 +39,8 @@ func (h *ManagerHandler) SaveAdapter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.managerService.SaveAdapter(&adapter); err != nil {
+	userID := r.Header.Get("X-User-Id")
+	if err := h.managerService.SaveAdapter(&adapter, userID); err != nil {
 		logger.Error("failed to save adapter", "adapter_id", adapter.ID, "graph_id", adapter.GraphID, "error", err)
 		writeInternalError(w, r, logger, err)
 		return
@@ -59,7 +60,8 @@ func (h *ManagerHandler) SaveDAG(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.managerService.SaveDAG(&g); err != nil {
+	userID := r.Header.Get("X-User-Id")
+	if err := h.managerService.SaveDAG(&g, userID); err != nil {
 		logger.Error("failed to save dag", "dag_id", g.ID, "error", err)
 		writeInternalError(w, r, logger, err)
 		return
@@ -89,7 +91,8 @@ func (h *ManagerHandler) GetDAG(w http.ResponseWriter, r *http.Request) {
 func (h *ManagerHandler) ListDAGs(w http.ResponseWriter, r *http.Request) {
 	logger := logging.FromContext(r.Context(), h.logger)
 
-	dags, err := h.managerService.ListDAGs()
+	userID := r.Header.Get("X-User-Id")
+	dags, err := h.managerService.ListDAGs(userID)
 	if err != nil {
 		logger.Error("failed to list dags", "error", err)
 		writeInternalError(w, r, logger, err)
@@ -130,7 +133,8 @@ func (h *ManagerHandler) UpdateDAG(w http.ResponseWriter, r *http.Request) {
 	}
 
 	g.ID = id
-	result, err := h.managerService.UpdateDAG(&g)
+	userID := r.Header.Get("X-User-Id")
+	result, err := h.managerService.UpdateDAG(&g, userID)
 	if err != nil {
 		logger.Error("failed to update dag", "dag_id", id, "error", err)
 		writeInternalError(w, r, logger, err)
@@ -210,7 +214,7 @@ func (h *ManagerHandler) GetAdapter(w http.ResponseWriter, r *http.Request) {
 func (h *ManagerHandler) ListAdapters(w http.ResponseWriter, r *http.Request) {
 	logger := logging.FromContext(r.Context(), h.logger)
 
-	userID := r.URL.Query().Get("userId")
+	userID := r.Header.Get("X-User-Id")
 	graphID := r.URL.Query().Get("graphId")
 
 	adapters, err := h.managerService.ListAdapters(userID, graphID)

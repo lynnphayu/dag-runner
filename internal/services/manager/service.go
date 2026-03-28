@@ -73,7 +73,7 @@ func (m *ManagerService) ListAdapters(userID, graphID string) ([]dag.Adapter[any
 	filter := map[string]interface{}{}
 
 	if userID != "" {
-		filter["user_id"] = userID
+		filter["userId"] = userID
 	}
 	if graphID != "" {
 		filter["graphId"] = graphID
@@ -113,7 +113,7 @@ func (m *ManagerService) ListAdapters(userID, graphID string) ([]dag.Adapter[any
 	return adapters, nil
 }
 
-func (m *ManagerService) SaveAdapter(adapter *dag.Adapter[any]) error {
+func (m *ManagerService) SaveAdapter(adapter *dag.Adapter[any], userID string) error {
 	// Validate adapter before save
 	if err := validation.ValidateAdapter(adapter); err != nil {
 		return fmt.Errorf("adapter validation failed: %w", err)
@@ -133,7 +133,7 @@ func (m *ManagerService) SaveAdapter(adapter *dag.Adapter[any]) error {
 	var data map[string]interface{}
 	json.Unmarshal(marshalAdapter, &data)
 	data["id"] = uuid.String()
-	data["user_id"] = "12345"
+	data["userId"] = userID
 
 	version := 1
 	subversion := 1
@@ -157,7 +157,7 @@ func (m *ManagerService) SaveAdapter(adapter *dag.Adapter[any]) error {
 }
 
 // SaveDAG stores a DAG definition in MongoDB
-func (m *ManagerService) SaveDAG(g *dag.Graph[*dag.Action, any]) error {
+func (m *ManagerService) SaveDAG(g *dag.Graph[*dag.Action, any], userID string) error {
 	// Validate DAG before save
 	if err := validation.ValidateDAG(g); err != nil {
 		return fmt.Errorf("DAG validation failed: %w", err)
@@ -177,7 +177,7 @@ func (m *ManagerService) SaveDAG(g *dag.Graph[*dag.Action, any]) error {
 	data := map[string]interface{}{}
 	json.Unmarshal(marshalDag, &data)
 	data["id"] = uuid.String()
-	data["user_id"] = "12345"
+	data["userId"] = userID
 	data["version"] = 1
 	data["subversion"] = 1
 	data["status"] = string(dag.Status_Draft)
@@ -195,6 +195,7 @@ func (m *ManagerService) SaveDAG(g *dag.Graph[*dag.Action, any]) error {
 	for _, n := range g.Nodes {
 		// Set linkage and versioning on each node
 		n.GraphID = data["id"].(string)
+		n.UserID = userID
 		n.Version = 1
 		n.Subversion = 1
 		n.CreatedAt = now
@@ -210,6 +211,7 @@ func (m *ManagerService) SaveDAG(g *dag.Graph[*dag.Action, any]) error {
 	}
 	for _, a := range g.Adapters {
 		a.GraphID = data["id"].(string)
+		a.UserID = userID
 		a.Version = 1
 		a.Subversion = 1
 		a.CreatedAt = now
@@ -338,11 +340,16 @@ func (m *ManagerService) GetDAG(id string) (*dag.Graph[*dag.Action, any], error)
 }
 
 // ListDAGs retrieves all stored DAG definitions
-func (m *ManagerService) ListDAGs() ([]dag.Graph[*dag.Action, any], error) {
+func (m *ManagerService) ListDAGs(userID string) ([]dag.Graph[*dag.Action, any], error) {
 	graphsCollection := constants.GRAPH_COLLECTION
 	nodesCollection := constants.NODE_COLLECTION
 	// Use aggregation to group by id and pick the latest by (version, subversion)
+	matchStage := bson.M{}
+	if userID != "" {
+		matchStage["userId"] = userID
+	}
 	pipeline := []bson.M{
+		{"$match": matchStage},
 		{"$sort": bson.M{"id": 1, "version": -1, "subversion": -1}},
 		{
 			"$group": bson.M{
@@ -478,7 +485,7 @@ func (m *ManagerService) DeleteDAG(id string) error {
 }
 
 // UpdateDAG updates an existing DAG definition
-func (m *ManagerService) UpdateDAG(g *dag.Graph[*dag.Action, any]) (interface{}, error) {
+func (m *ManagerService) UpdateDAG(g *dag.Graph[*dag.Action, any], userID string) (interface{}, error) {
 	// Validate DAG before update
 	if err := validation.ValidateDAG(g); err != nil {
 		return nil, fmt.Errorf("DAG validation failed: %w", err)
@@ -503,10 +510,7 @@ func (m *ManagerService) UpdateDAG(g *dag.Graph[*dag.Action, any]) (interface{},
 	}
 	newData := map[string]interface{}{}
 	_ = json.Unmarshal(marshalDag, &newData)
-	// preserve user_id if present
-	if userID, ok := currentDoc["user_id"]; ok {
-		newData["user_id"] = userID
-	}
+	newData["userId"] = userID
 	// Always enforce status transitions via Publish; keep current status in new entry
 	newData["status"] = string(dag.Status_Draft)
 	// keep same business id
@@ -526,6 +530,7 @@ func (m *ManagerService) UpdateDAG(g *dag.Graph[*dag.Action, any]) (interface{},
 		// persist nodes for this new revision
 		for _, n := range g.Nodes {
 			n.GraphID = g.ID
+			n.UserID = userID
 			n.Version = currentVersion
 			n.Subversion = currentSubversion + 1
 			n.CreatedAt = now
@@ -541,6 +546,7 @@ func (m *ManagerService) UpdateDAG(g *dag.Graph[*dag.Action, any]) (interface{},
 		}
 		for _, a := range g.Adapters {
 			a.GraphID = g.ID
+			a.UserID = userID
 			a.Version = currentVersion
 			a.Subversion = currentSubversion + 1
 			a.CreatedAt = now
@@ -578,6 +584,7 @@ func (m *ManagerService) UpdateDAG(g *dag.Graph[*dag.Action, any]) (interface{},
 	// persist nodes for this new version
 	for _, n := range g.Nodes {
 		n.GraphID = g.ID
+		n.UserID = userID
 		n.Version = currentVersion + 1
 		n.Subversion = 1
 		n.CreatedAt = now
@@ -593,6 +600,7 @@ func (m *ManagerService) UpdateDAG(g *dag.Graph[*dag.Action, any]) (interface{},
 	}
 	for _, a := range g.Adapters {
 		a.GraphID = g.ID
+		a.UserID = userID
 		a.Version = currentVersion + 1
 		a.Subversion = 1
 		a.CreatedAt = now

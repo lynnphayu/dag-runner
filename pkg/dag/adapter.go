@@ -22,6 +22,7 @@ type Adapter[T HttpAdapter | SchedularAdapter | any] struct {
 	Meta       T                      `bson:"meta" json:"-"`
 	MetaRaw    json.RawMessage        `json:"meta" bson:"-"`
 	GraphID    string                 `json:"graphId" bson:"graphId"`
+	UserID     string                 `json:"userId,omitempty" bson:"userId,omitempty"`
 	ID         string                 `json:"id" bson:"id"`
 	CreatedAt  time.Time              `json:"createdAt,omitempty" bson:"createdAt,omitempty"`
 }
@@ -63,6 +64,7 @@ func (a *Adapter[T]) UnmarshalJSON(b []byte) error {
 	a.ID = temp.ID
 	a.InputMap = temp.InputMap
 	a.GraphID = temp.GraphID
+	a.UserID = temp.UserID
 	a.MetaRaw = temp.MetaRaw
 	a.CreatedAt = temp.CreatedAt
 

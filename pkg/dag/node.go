@@ -15,6 +15,7 @@ type BackReferencable[T any] interface {
 type Node[T any] struct {
 	ID           string    `json:"id"                     bson:"id"`
 	GraphID      string    `json:"graphId,omitempty"      bson:"graphId,omitempty"`
+	UserID       string    `json:"userId,omitempty"       bson:"userId,omitempty"`
 	Version      int       `json:"version,omitempty"      bson:"version,omitempty"`
 	Subversion   int       `json:"subversion,omitempty"   bson:"subversion,omitempty"`
 	Name         string    `json:"name"                   bson:"name"`
@@ -26,6 +27,7 @@ type Node[T any] struct {
 
 type Graph[T any, A any] struct {
 	ID         string              `json:"id"                    bson:"id"`
+	UserID     string              `json:"userId,omitempty"      bson:"userId,omitempty"`
 	Name       string              `json:"name"                  bson:"name"`
 	Version    int                 `json:"version"               bson:"version"`
 	Subversion int                 `json:"subversion"            bson:"subversion"`
